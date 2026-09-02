@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "AdSniper",
+  "version": "2.0",
+  "description": "Inspect network requests, selectively block ads, and edit/lock cookies — all from one popup.",
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "storage",
+    "tabs",
+    "webRequest",
+    "cookies",
+    "scripting"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "AdSniper"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_static",
+        "enabled": true,
+        "path": "rules/rules.json"
+      }
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["content/sniper-game.js"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ]
+}

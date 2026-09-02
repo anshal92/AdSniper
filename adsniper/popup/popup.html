@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AdSniper</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f0f17;
+      --surface:  #1c1c28;
+      --surface2: #23233a;
+      --border:   #2e2e42;
+      --text:     #e8e8f0;
+      --muted:    #6b6b88;
+      --accent:   #7c6aff;
+      --red:      #ef4444;
+      --green:    #22c55e;
+      --amber:    #f59e0b;
+      --orange:   #f97316;
+      --blue:     #3b82f6;
+      --cyan:     #06b6d4;
+      --radius:   6px;
+    }
+
+    body {
+      width: 520px;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 12px;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ═══════════════════════════════════════
+       HEADER
+    ═══════════════════════════════════════ */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .logo { font-size: 14px; font-weight: 700; letter-spacing: .5px; }
+    .logo span { color: var(--accent); }
+    .header-badge {
+      margin-left: auto;
+      background: var(--red);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 99px;
+      display: none;
+    }
+    .header-badge.visible { display: inline-block; }
+
+    /* Sniping Game button */
+    .sniping-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 8px;
+    }
+    .btn-sniping {
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      border-radius: var(--radius);
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+    .btn-sniping:hover {
+      background: rgba(34, 197, 94, 0.25);
+      border-color: var(--green);
+      box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
+    }
+    .btn-sniping:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .sniping-newtab {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .sniping-newtab input[type="checkbox"] {
+      width: 12px;
+      height: 12px;
+      accent-color: var(--green);
+      cursor: pointer;
+    }
+    .sniping-newtab-label {
+      font-size: 9px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ═══════════════════════════════════════
+       TAB BAR
+    ═══════════════════════════════════════ */
+    .tab-bar {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 9px 0;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color .15s, border-color .15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* ═══════════════════════════════════════
+       PANELS
+    ═══════════════════════════════════════ */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ═══════════════════════════════════════
+       CONTROL BAR (Ad Blocker)
+    ═══════════════════════════════════════ */
+    .control-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Toggle switch */
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .toggle-wrap input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-track {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      background: var(--muted);
+      border-radius: 10px;
+      transition: background .2s;
+      flex-shrink: 0;
+    }
+    .toggle-wrap input:checked + .toggle-track { background: var(--green); }
+    .toggle-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+    .toggle-wrap input:checked + .toggle-track .toggle-thumb {
+      transform: translateX(16px);
+    }
+    .toggle-label {
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .toggle-label.on { color: var(--green); }
+    .toggle-label.off { color: var(--muted); }
+
+    /* Filter input */
+    .filter-input {
+      flex: 1;
+      min-width: 0;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 11px;
+      padding: 4px 10px;
+      outline: none;
+    }
+    .filter-input:focus { border-color: var(--accent); }
+    .filter-input::placeholder { color: var(--muted); }
+
+    /* ═══════════════════════════════════════
+       SECTION HEADERS
+    ═══════════════════════════════════════ */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .count-pill {
+      background: var(--border);
+      color: var(--text);
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 99px;
+    }
+    .section-hint {
+      margin-left: 2px;
+      font-size: 10px;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--muted);
+    }
+    .btn-link {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 10px;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .btn-link:hover { color: var(--text); }
+
+    /* ═══════════════════════════════════════
+       LIST CONTAINERS
+    ═══════════════════════════════════════ */
+    .list-container {
+      max-height: 200px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .rules-container  { max-height: 130px; }
+    .cookie-container { max-height: 400px; }
+
+    .list-container::-webkit-scrollbar { width: 4px; }
+    .list-container::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 99px;
+    }
+
+    .empty {
+      padding: 14px;
+      color: var(--muted);
+      font-style: italic;
+      text-align: center;
+    }
+
+    /* ═══════════════════════════════════════
+       REQUEST ROWS
+    ═══════════════════════════════════════ */
+    .request-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      border-bottom: 1px solid var(--border);
+      min-height: 30px;
+    }
+    .request-row:last-child { border-bottom: none; }
+    .request-row:hover { background: rgba(255,255,255,.025); }
+    .request-row.editing {
+      background: rgba(124,106,255,.07);
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 38px;
+    }
+
+    /* Ad highlight */
+    .request-row.is-ad {
+      border-left: 3px solid var(--red);
+      background: rgba(239,68,68,.06);
+      padding-left: 11px;
+    }
+    .ad-flag {
+      font-size: 11px;
+      flex-shrink: 0;
+      cursor: default;
+    }
+
+    /* Resource type badges */
+    .type-badge {
+      flex-shrink: 0;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .3px;
+      padding: 2px 5px;
+      border-radius: 3px;
+      min-width: 48px;
+      text-align: center;
+      color: #fff;
+      background: var(--muted);
+    }
+    .type-script         { background: var(--orange); }
+    .type-image          { background: var(--blue); }
+    .type-xmlhttprequest { background: var(--red); }
+    .type-sub_frame      { background: #a855f7; }
+    .type-stylesheet     { background: var(--cyan); color: #000; }
+    .type-media          { background: #ec4899; }
+    .type-ping           { background: var(--muted); }
+    .type-main_frame     { background: var(--green); color: #000; }
+    .type-font           { background: #84cc16; color: #000; }
+    .type-websocket      { background: #14b8a6; }
+
+    .req-url {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      color: var(--text);
+    }
+
+    /* ═══════════════════════════════════════
+       INLINE BLOCK PATTERN EDITOR
+    ═══════════════════════════════════════ */
+    .edit-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .pattern-input {
+      flex: 1;
+      min-width: 0;
+      background: var(--bg);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      font-size: 11px;
+      padding: 3px 8px;
+      outline: none;
+    }
+    .pattern-input:focus {
+      box-shadow: 0 0 0 2px rgba(124,106,255,.25);
+    }
+
+    /* ═══════════════════════════════════════
+       RULE ROWS
+    ═══════════════════════════════════════ */
+    .rule-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 14px;
+      border-bottom: 1px solid var(--border);
+      min-height: 28px;
+    }
+    .rule-row:last-child { border-bottom: none; }
+    .rule-pattern {
+      flex: 1;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--red);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .block-count {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 99px;
+      background: rgba(239,68,68,.12);
+      color: var(--red);
+      border: 1px solid rgba(239,68,68,.25);
+      white-space: nowrap;
+    }
+    .block-count.zero {
+      background: rgba(107,107,136,.1);
+      color: var(--muted);
+      border-color: var(--border);
+    }
+
+    /* ═══════════════════════════════════════
+       COOKIE ROWS
+    ═══════════════════════════════════════ */
+    .cookie-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 14px;
+      border-bottom: 1px solid var(--border);
+      min-height: 34px;
+      transition: background .1s;
+    }
+    .cookie-row:last-child { border-bottom: none; }
+    .cookie-row:hover { background: rgba(255,255,255,.02); }
+    .cookie-row.locked {
+      border-left: 3px solid var(--amber);
+      background: rgba(245,158,11,.05);
+      padding-left: 11px;
+    }
+    .cookie-row.editing {
+      background: rgba(124,106,255,.07);
+      flex-wrap: wrap;
+      min-height: 40px;
+      gap: 6px;
+    }
+
+    .cookie-name {
+      width: 110px;
+      flex-shrink: 0;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: var(--accent);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cookie-value {
+      flex: 1;
+      font-size: 11px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 3px;
+      border: 1px solid transparent;
+      transition: border-color .15s;
+    }
+    .cookie-value:hover {
+      border-color: var(--border);
+      background: rgba(255,255,255,.04);
+    }
+    .cookie-value.locked-value {
+      cursor: default;
+      color: var(--muted);
+    }
+    .cookie-value.locked-value:hover {
+      border-color: transparent;
+      background: transparent;
+    }
+
+    /* Flag chips (H = HttpOnly, S = Secure, L/N/S = SameSite) */
+    .cookie-flags {
+      display: flex;
+      gap: 3px;
+      flex-shrink: 0;
+    }
+    .cookie-flag {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: var(--surface2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    /* ═══════════════════════════════════════
+       BUTTONS
+    ═══════════════════════════════════════ */
+    .btn {
+      flex-shrink: 0;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 3px 10px;
+      transition: opacity .15s;
+      line-height: 1.4;
+    }
+    .btn:hover { opacity: .8; }
+
+    .btn-block   { background: var(--red);    color: #fff; }
+    .btn-confirm { background: var(--green);  color: #fff; }
+    .btn-cancel  { background: var(--border); color: var(--text); }
+    .btn-remove  {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .btn-remove:hover { border-color: var(--red); color: var(--red); opacity: 1; }
+
+    .btn-lock {
+      padding: 3px 7px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .btn-lock.is-locked {
+      border-color: var(--amber);
+      color: var(--amber);
+    }
+    .btn-lock:hover { opacity: .7; }
+
+    .btn-delete {
+      padding: 3px 7px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .btn-delete:hover { border-color: var(--red); color: var(--red); opacity: 1; }
+
+    /* ═══════════════════════════════════════
+       DOM CLEANUP BAR
+    ═══════════════════════════════════════ */
+    .dom-cleanup-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 14px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+    .hidden-stat {
+      font-size: 10px;
+      color: var(--muted);
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .hidden-stat.active {
+      color: var(--green);
+      font-weight: 700;
+    }
+    .btn-clean-page {
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .btn-clean-page:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ═══════════════════════════════════════
+       ELEMENT PICKER + IFRAME BLOCKER BAR
+    ═══════════════════════════════════════ */
+    .tools-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+    .tools-bar .separator {
+      width: 1px;
+      height: 16px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+    .btn-picker {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(168,85,247,.1);
+      border: 1px solid rgba(168,85,247,.3);
+      border-radius: var(--radius);
+      color: #a855f7;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 12px;
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .btn-picker:hover {
+      background: rgba(168,85,247,.2);
+      border-color: rgba(168,85,247,.5);
+    }
+    .iframe-stat {
+      font-size: 10px;
+      color: var(--muted);
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .iframe-stat.active {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* ═══════════════════════════════════════
+       MASS-BLOCK BAR
+    ═══════════════════════════════════════ */
+    .mass-block-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 14px;
+      background: rgba(239,68,68,.06);
+      border-bottom: 1px solid var(--border);
+    }
+    .btn-mass-block {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 18px;
+      background: var(--red);
+      color: #fff;
+      border: 2px solid var(--red);
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .4px;
+      cursor: pointer;
+      transition: background .2s, box-shadow .2s;
+      flex-shrink: 0;
+    }
+    .btn-mass-block:hover { background: #dc2626; }
+    .btn-mass-block.active {
+      background: #7f1d1d;
+      border-color: var(--red);
+      box-shadow: 0 0 0 3px rgba(239,68,68,.35);
+      animation: mass-block-pulse 2s ease-in-out infinite;
+    }
+    @keyframes mass-block-pulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(239,68,68,.35); }
+      50%       { box-shadow: 0 0 0 7px rgba(239,68,68,.1); }
+    }
+    .btn-mass-block .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.5);
+      flex-shrink: 0;
+    }
+    .btn-mass-block.active .dot {
+      background: #fca5a5;
+      animation: dot-blink 1.2s step-end infinite;
+    }
+    @keyframes dot-blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .2; }
+    }
+    .mass-block-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .mass-block-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .mass-block-sub {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+    .mass-block-sub.active { color: var(--red); }
+
+    /* New-tab block button (beside mass-block) */
+    .btn-newtab-block {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 14px;
+      background: var(--orange);
+      color: #fff;
+      border: 2px solid var(--orange);
+      border-radius: var(--radius);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .3px;
+      cursor: pointer;
+      transition: background .2s, box-shadow .2s;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .btn-newtab-block:hover { background: #ea580c; }
+    .btn-newtab-block.active {
+      background: #7c2d12;
+      border-color: var(--orange);
+      box-shadow: 0 0 0 3px rgba(249,115,22,.35);
+      animation: newtab-pulse 2s ease-in-out infinite;
+    }
+    @keyframes newtab-pulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(249,115,22,.35); }
+      50%       { box-shadow: 0 0 0 7px rgba(249,115,22,.1); }
+    }
+    .btn-newtab-block .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.5);
+      flex-shrink: 0;
+    }
+    .btn-newtab-block.active .dot {
+      background: #fdba74;
+      animation: dot-blink 1.2s step-end infinite;
+    }
+
+    /* ═══════════════════════════════════════
+       FOOTER
+    ═══════════════════════════════════════ */
+    footer {
+      padding: 5px 14px;
+      font-size: 10px;
+      color: var(--muted);
+      text-align: right;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────── -->
+<header>
+  <div class="logo">🎯 Ad<span>Sniper</span></div>
+  <div class="sniping-group">
+    <button id="sniping-btn" class="btn-sniping" title="Start Ad Sniping Game">🔫 Sniping OFF</button>
+    <label class="sniping-newtab" title="Open in new tab instead of reloading (preserves your data)">
+      <input type="checkbox" id="sniping-newtab-toggle" />
+      <span class="sniping-newtab-label">New Tab</span>
+    </label>
+  </div>
+  <div id="header-badge" class="header-badge"></div>
+</header>
+
+<!-- ── Tab Bar ──────────────────────────────────── -->
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="adblocker">🛡 Ad Blocker</button>
+  <button class="tab-btn" data-tab="cookies">🍪 Cookie Editor</button>
+</nav>
+
+<!-- ══════════════════════════════════════════════
+     PANEL: AD BLOCKER
+══════════════════════════════════════════════ -->
+<div id="panel-adblocker" class="panel active">
+
+  <!-- Control bar -->
+  <div class="control-bar">
+    <label class="toggle-wrap" id="monitoring-label-wrap">
+      <input type="checkbox" id="monitoring-toggle" checked />
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      <span id="monitoring-label" class="toggle-label on">Monitoring ON</span>
+    </label>
+    <input type="text" id="filter-input" class="filter-input" placeholder="🔍 Filter by URL…" />
+  </div>
+
+  <!-- Mass-block action bar -->
+  <div class="mass-block-bar">
+    <button id="mass-block-btn" class="btn-mass-block">
+      <span class="dot"></span>
+      AD Blocker
+    </button>
+    <button id="new-tab-block-btn" class="btn-newtab-block">
+      <span class="dot"></span>
+      Block New Tab Ads
+    </button>
+    <div class="mass-block-info">
+      <div class="mass-block-title" id="mass-block-title">Block all known ad patterns</div>
+      <div class="mass-block-sub"  id="mass-block-sub">Inactive — click to activate</div>
+    </div>
+  </div>
+
+  <!-- DOM Cleanup bar -->
+  <div class="dom-cleanup-bar">
+    <label class="toggle-wrap">
+      <input type="checkbox" id="dom-cleanup-toggle" checked />
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      <span id="dom-cleanup-label" class="toggle-label on">DOM Cleanup ON</span>
+    </label>
+    <span id="hidden-stat" class="hidden-stat">0 hidden</span>
+    <button id="clean-page-btn" class="btn-clean-page">🧹 Clean Page</button>
+  </div>
+
+  <!-- Tools bar: Element Picker + iFrame Blocker -->
+  <div class="tools-bar">
+    <button id="element-picker-btn" class="btn-picker">🎯 Pick Element</button>
+    <div class="separator"></div>
+    <label class="toggle-wrap">
+      <input type="checkbox" id="iframe-blocker-toggle" />
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      <span id="iframe-blocker-label" class="toggle-label off">Block iFrame Ads</span>
+    </label>
+    <span id="iframe-stat" class="iframe-stat">0 removed</span>
+  </div>
+
+  <!-- Requests section -->
+  <div class="section-header">
+    Requests
+    <span id="req-count" class="count-pill">0</span>
+    <span class="section-hint">current tab · newest first</span>
+    <button id="clear-btn" class="btn-link">clear</button>
+  </div>
+  <div id="requests-list" class="list-container">
+    <div class="empty">Navigate to a page to see requests.</div>
+  </div>
+
+  <!-- Blocked rules section -->
+  <div class="section-header">
+    Blocked Rules
+    <span id="rules-count" class="count-pill">0</span>
+  </div>
+  <div id="rules-list" class="list-container rules-container">
+    <div class="empty">No rules active.</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     PANEL: COOKIE EDITOR
+══════════════════════════════════════════════ -->
+<div id="panel-cookies" class="panel">
+  <div class="section-header">
+    Cookies
+    <span id="cookie-count" class="count-pill">0</span>
+    <span id="cookie-domain" class="section-hint"></span>
+    <button id="refresh-cookies-btn" class="btn-link">↺ refresh</button>
+  </div>
+  <div id="cookies-list" class="list-container cookie-container">
+    <div class="empty">Loading…</div>
+  </div>
+</div>
+
+<footer id="footer">Initializing…</footer>
+
+<script src="popup.js"></script>
+</body>
+</html>
