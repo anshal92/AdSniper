@@ -44,16 +44,16 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
 ### 🤖 6. On-Device Gemini Nano AI Assistant & Autonomous MCP Tools
 - **100% Local Built-in AI**: Uses Chrome's native **Prompt API** (`window.ai.languageModel` / `LanguageModel`) to run Google's **Gemini Nano** directly on your device. Zero external cloud API calls, zero latency penalty, and zero private data leakage.
 - **Autonomous Model Context Protocol (MCP) Tools**:
-  - `tool_inspect_requests`: Produces instant forensic ad & tracker audit reports, decoding exfiltrated query parameters (Publisher IDs, Auction Bids, User Tracking UUIDs, Topics/FLEDGE data).
+  - `tool_inspect_requests`[WIP]: Produces instant forensic ad & tracker audit reports, decoding exfiltrated query parameters (Publisher IDs, Auction Bids, User Tracking UUIDs, Topics/FLEDGE data).
   - `tool_remove_overlay`: Detects and scrubs anti-adblock modals, paywalls, sticky video overlays, and unfreezes locked body scrolling.
-  - `tool_add_block_rule`: Synthesizes dynamic DeclarativeNetRequest block rules from natural language (e.g. *"Block analytics.foo.com"*).
+  - `tool_add_block_rule`[WIP]: Synthesizes dynamic DeclarativeNetRequest block rules from natural language (e.g. *"Block analytics.foo.com"*).
   - `tool_hide_element_css`: Generates and injects custom CSS selector rules (`display: none !important`) to eliminate annoying banners and clutter.
   - `tool_extract_clean_content`: Extracts clean, readable article text stripped of sidebars, ads, and widgets.
-  - `tool_toggle_feature`: Voice/text command shield switcher (`new_tab_block`, `mass_block`, `dom_cleanup`, etc.).
+  - `tool_toggle_feature`[WIP]: Voice/text command shield switcher (`new_tab_block`, `mass_block`, `dom_cleanup`, etc.).
 - **Intent-First Deterministic Dispatcher**: Common commands (e.g., *"kill popups"*, *"audit trackers"*, *"remove on click new tab"*) execute with **0ms latency** via deterministic intent matching, guaranteeing browser action without waiting for model token generation.
 - **Resilient Heuristics Fallback**: Even if Chrome flags are disabled or Gemini Nano is still downloading, AdSniper automatically runs all MCP tools via local deterministic heuristics.
 - **Tri-State Status Indicator**:
-  - 🟢 **Blinking Green**: Nano Ready (or Heuristics Mode active & running).
+  - 🟢 **Blinking Green**: Nano Ready[With issues] (or Heuristics Mode active & running).
   - 🟡 **Pulsing Yellow**: Initializing or model downloading in Chrome components.
   - 🔴 **Static Red**: AI engine offline / unavailable.
 
