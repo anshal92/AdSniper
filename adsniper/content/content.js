@@ -183,13 +183,14 @@ function scanAndHide() {
 // URL helpers
 // ─────────────────────────────────────────────────────────
 function urlAttrs(el) {
+  const d = el.dataset || {};
   return [
     el.src,
     el.href,
     el.currentSrc,
-    el.dataset?.src,
-    el.dataset?.lazySrc,
-    el.dataset?.originalSrc,
+    d.src,
+    d.lazySrc,
+    d.originalSrc,
   ].filter(Boolean);
 }
 
@@ -205,7 +206,7 @@ function extractBgUrl(bgImage) {
 
 function anyUrlMatches(el) {
   const urls = urlAttrs(el);
-  const bg   = extractBgUrl(el.style?.backgroundImage);
+  const bg   = extractBgUrl(el.style && el.style.backgroundImage);
   if (bg) urls.push(bg);
   return urls.some((u) => isBlocked(u));
 }
@@ -273,12 +274,14 @@ function processNewNode(node) {
   }
 
   // Check all ad-likely descendants
-  node.querySelectorAll?.('img, script, iframe, video, audio, source, embed, object').forEach((child) => {
-    if (anyUrlMatches(child)) {
-      const container = bestContainer(child);
-      if (applyHide(container)) hiddenCount++;
-    }
-  });
+  if (node.querySelectorAll) {
+    node.querySelectorAll('img, script, iframe, video, audio, source, embed, object').forEach((child) => {
+      if (anyUrlMatches(child)) {
+        const container = bestContainer(child);
+        if (applyHide(container)) hiddenCount++;
+      }
+    });
+  }
 }
 
 const mutationObserver = new MutationObserver((mutations) => {
@@ -295,12 +298,14 @@ const mutationObserver = new MutationObserver((mutations) => {
           node.remove();
           iframesRemovedCount++;
         }
-        node.querySelectorAll?.('iframe').forEach((iframe) => {
-          if (isAdIframe(iframe)) {
-            iframe.remove();
-            iframesRemovedCount++;
-          }
-        });
+        if (node.querySelectorAll) {
+          node.querySelectorAll('iframe').forEach((iframe) => {
+            if (isAdIframe(iframe)) {
+              iframe.remove();
+              iframesRemovedCount++;
+            }
+          });
+        }
       }
     }
   }
@@ -339,11 +344,13 @@ chrome.storage.local.get(
       }
     }
 
-    // If sniping game was pending (page reloaded/new tab for game), launch it
+    // If sniping game was pending (page reloaded/new tab for game), launch it immediately
     if (result.snipingGamePending) {
       chrome.storage.local.set({ snipingGamePending: false });
-      // Wait for ads to fully render before launching game
-      setTimeout(() => launchSnipingGame(), 1500);
+      if (window.AdSniperGame && typeof window.AdSniperGame.injectAntiOverlayStyles === 'function') {
+        window.AdSniperGame.injectAntiOverlayStyles();
+      }
+      launchSnipingGame();
     }
   }
 );
@@ -525,7 +532,7 @@ function findNearestAdUrl(startEl) {
     if (!node || node === document.documentElement) break;
 
     const urls = urlAttrs(node);
-    const bg = extractBgUrl(node.style?.backgroundImage);
+    const bg = extractBgUrl(node.style && node.style.backgroundImage);
     if (bg) urls.push(bg);
 
     // Prefer URLs that match known ad patterns
@@ -549,7 +556,7 @@ function findNearestAdUrl(startEl) {
 
 function extractBestUrl(el) {
   const urls = urlAttrs(el);
-  const bg = extractBgUrl(el.style?.backgroundImage);
+  const bg = extractBgUrl(el.style && el.style.backgroundImage);
   if (bg) urls.push(bg);
   return urls[0] || null;
 }
@@ -567,7 +574,7 @@ function truncateUrl(url, max) {
 
 /** Checks if an iframe looks like an ad based on its src, id, class, or size. */
 function isAdIframe(iframe) {
-  const src = iframe.src || iframe.dataset?.src || '';
+  const src = iframe.src || (iframe.dataset && iframe.dataset.src) || '';
 
   // 1. Check src against ad hosts/patterns
   if (src && isBlocked(src)) return true;
@@ -611,56 +618,17 @@ function scanAndRemoveAdIframes() {
 }
 
 // ─────────────────────────────────────────────────────────
-// SNIPING GAME — dynamically loads the game engine and launches it
-//
-// The game engine lives in content/sniper-game.js and is loaded
-// on-demand via web_accessible_resources to avoid bloating every
-// page load with ~15KB of game code.
+// SNIPING GAME — launches the game engine (sniper-game.js)
 // ─────────────────────────────────────────────────────────
 
-let snipingGameLoaded = false;
-
-function launchSnipingGame() {
-  if (snipingGameLoaded && window.AdSniperGame) {
+function launchSnipingGame(retriesRemaining) {
+  if (typeof retriesRemaining !== 'number') retriesRemaining = 10;
+  if (window.AdSniperGame && typeof window.AdSniperGame.launchGame === 'function') {
     window.AdSniperGame.launchGame();
-    return;
-  }
-
-  const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('content/sniper-game.js');
-  script.onload = () => {
-    snipingGameLoaded = true;
-    if (window.AdSniperGame) {
-      window.AdSniperGame.launchGame();
-    } else {
-      console.error('[AdSniper] Game engine failed to initialize');
-    }
-  };
-  script.onerror = (err) => {
-    console.error('[AdSniper] Failed to load game engine:', err);
-    // Clean up the pending flag
+  } else if (retriesRemaining > 0) {
+    setTimeout(() => launchSnipingGame(retriesRemaining - 1), 40);
+  } else {
+    console.error('[AdSniper] Game engine failed to initialize');
     chrome.storage.local.set({ snipingGamePending: false });
-  };
-  document.head.appendChild(script);
+  }
 }
-
-// Listen for game-end events from the game engine (runs in page main world)
-// The game can't call chrome.* APIs directly, so it posts a message here.
-window.addEventListener('message', (event) => {
-  if (event.source !== window) return;
-  if (event.data?.type !== 'ADSNIPER_GAME_ENDED') return;
-
-  console.log(`[AdSniper] Game ended — Score: ${event.data.score}, Birds: ${event.data.birdsHit}/${event.data.totalBirds}`);
-
-  // Tell SW to restore pre-game blocking state
-  chrome.runtime.sendMessage({ type: 'RESTORE_SNIPING_STATE' }, (response) => {
-    if (response?.ok) {
-      console.log('[AdSniper] Blocking state restored');
-    } else {
-      console.warn('[AdSniper] Failed to restore state:', response);
-    }
-  });
-
-  // Clear the game pending flag
-  chrome.storage.local.set({ snipingGamePending: false });
-});

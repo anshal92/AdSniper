@@ -60,15 +60,454 @@ window.AdSniperGame = (() => {
   let particles = [];
   let score = 0;
   let combo = 0;
+  let bestCombo = 0;
   let lastHitTime = 0;
   let totalBirds = 0;
   let birdsHit = 0;
+  let shotsFired = 0;
+  let shotsMissed = 0;
+  let multikillCount = 0;
+  let doubleKills = 0;
+  let tripleKills = 0;
+  let multiKills = 0; // 4+ kills
+  let fireworks = []; // Fireworks for accuracy > 80%
+  let fireworkSpawnTimer = 0;
+  let quitButtonBounds = { x: 0, y: 0, w: 0, h: 0 };
   let mouseX = 0, mouseY = 0;
   let animFrameId = null;
   let frameCount = 0;
   let loadingProgress = 0;
   let loadingMessage = 'Scanning for ads...';
   let gameOverAlpha = 0; // Fade-in for game over screen
+  let loadingPurgedAds = []; // Overlays caught and purged during the loading screen
+
+  // ═══════════════════════════════════════════════
+  //  COVERING OVERLAY & POPUP PURGER
+  // ═══════════════════════════════════════════════
+  let popupObserver = null;
+  let overlayCheckInterval = null;
+  let antiOverlayStyleEl = null;
+
+  /**
+   * Injects CSS rules to immediately hide and deactivate ad overlays, modals,
+   * and anti-adblock banners before and during game loading.
+   */
+  function injectAntiOverlayStyles() {
+    if (antiOverlayStyleEl && antiOverlayStyleEl.isConnected) return;
+    try {
+      antiOverlayStyleEl = document.createElement('style');
+      antiOverlayStyleEl.id = 'adsniper-anti-overlay-css';
+      antiOverlayStyleEl.textContent = `
+        [data-shb],
+        [data-area],
+        [data-onopen],
+        [data-onclose],
+        .D1BnW,
+        ._0Or05,
+        .Kv1JU,
+        #a1rmqtdyf,
+        #custom-ad-slot,
+        [id^="bg-ssp-"],
+        div[style*="2147483647"]:not(#adsniper-game-canvas),
+        div[style*="2147483646"]:not(#adsniper-game-canvas),
+        div[style*="z-index: 2147483647"]:not(#adsniper-game-canvas),
+        div[style*="z-index: 2147483646"]:not(#adsniper-game-canvas),
+        iframe[src*="nauticaldiscipline"],
+        iframe[src*="composed-stop"],
+        iframe[src*="hoopoohonesty"],
+        iframe[src*="shikosharply"],
+        iframe[src*="mynahsterfez"],
+        iframe[src*="pubadx"] {
+          display: none !important;
+          visibility: hidden !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+          z-index: -999999 !important;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(antiOverlayStyleEl);
+    } catch (e) {
+      console.warn('[AdSniper] Failed to inject anti-overlay styles:', e);
+    }
+  }
+
+  function removeAntiOverlayStyles() {
+    if (antiOverlayStyleEl) {
+      try { antiOverlayStyleEl.remove(); } catch (e) {}
+      antiOverlayStyleEl = null;
+    }
+    const existing = document.getElementById('adsniper-anti-overlay-css');
+    if (existing) {
+      try { existing.remove(); } catch (e) {}
+    }
+  }
+
+  /**
+   * Intercepts and drops ad-network window message events that trigger new tab popups.
+   */
+  function onInterceptAdMessage(e) {
+    if (e.data && (e.data.$G$ || (typeof e.data === 'object' && (e.data.event === 'open' || e.data.event === 'close')))) {
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      console.warn('[AdSniper] Intercepted ad postMessage:', e.data);
+    }
+  }
+
+  /**
+   * Walks up the DOM tree from an element to find its topmost overlay container.
+   */
+  function getOverlayRoot(el) {
+    let target = el;
+    while (target && target.parentElement && target.parentElement !== document.body && target.parentElement !== document.documentElement) {
+      const p = target.parentElement;
+      if (p.id === 'adsniper-game-canvas' || (p.id && p.id.startsWith('adsniper'))) return el;
+      if (p.hasAttribute('data-shb') ||
+          p.id === 'a1rmqtdyf' ||
+          p.id === 'custom-ad-slot' ||
+          p.id.startsWith('bg-ssp-') ||
+          (p.style && (p.style.position === 'fixed' || (p.style.zIndex && parseInt(p.style.zIndex, 10) >= 1000)))) {
+        target = p;
+      } else {
+        break;
+      }
+    }
+    return target;
+  }
+
+  function isCoveringOverlay(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+
+    // Never touch AdSniper elements
+    if (el.id === 'adsniper-game-canvas' || (el.id && el.id.startsWith('adsniper'))) return false;
+    if (el.closest && el.closest('#adsniper-game-canvas, [id^="adsniper"]')) return false;
+
+    // Never delete fundamental root containers
+    const tag = el.tagName;
+    if (tag === 'HTML' || tag === 'BODY' || tag === 'HEAD' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK') {
+      return false;
+    }
+
+    // 1. Explicit ad popup / anti-adblock tags and attributes
+    if (el.hasAttribute('data-shb') || el.getAttribute('data-shb') === '1' ||
+        el.hasAttribute('data-area') || el.hasAttribute('data-onopen') || el.hasAttribute('data-onclose')) {
+      return true;
+    }
+    if (el.id && (el.id === 'a1rmqtdyf' || el.id === 'custom-ad-slot' || el.id.startsWith('bg-ssp-') || /^(bg-ssp|custom-ad|a1rm|fqkfun)/i.test(el.id))) {
+      return true;
+    }
+    if (el.classList && (el.classList.contains('D1BnW') || el.classList.contains('_0Or05') || el.classList.contains('Kv1JU') || el.classList.contains('blox'))) {
+      return true;
+    }
+
+    // 2. Elements containing ad iframes or srcdoc redirects
+    if (el.querySelector && el.querySelector('iframe[srcdoc], iframe[sandbox*="allow-popups"], iframe[src*="nauticaldiscipline"], iframe[src*="composed-stop"], iframe[src*="hoopoohonesty"], iframe[src*="shikosharply"], iframe[src*="mynahsterfez"], iframe[src*="pubadx"]')) {
+      return true;
+    }
+
+    let style;
+    try { style = window.getComputedStyle(el); } catch (e) { return false; }
+    if (!style || style.display === 'none') return false;
+
+    const pos = style.position;
+    const inlineStyle = (el.getAttribute('style') || '').toLowerCase();
+    const zIndex = parseInt(style.zIndex, 10);
+
+    // 3. Any element with maximum/high z-index other than game canvas
+    if (!isNaN(zIndex) && zIndex >= 1000 && (pos === 'fixed' || pos === 'absolute')) {
+      return true;
+    }
+    if (inlineStyle.includes('2147483647') || inlineStyle.includes('2147483646')) {
+      return true;
+    }
+
+    // 4. Inset: 0 full-screen overlays
+    if ((pos === 'fixed' || pos === 'absolute') &&
+        (inlineStyle.includes('inset: 0') || inlineStyle.includes('inset:0') || style.inset === '0px' ||
+         (style.top === '0px' && style.left === '0px' && style.bottom === '0px' && style.right === '0px'))) {
+      return true;
+    }
+
+    // 5. Fixed container with 100vw / 100vh / 100dvh child
+    if ((pos === 'fixed' || pos === 'absolute') && el.querySelector && el.querySelector('[style*="100vw"], [style*="100vh"], [style*="100dvh"]')) {
+      return true;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // 6. Viewport coverage
+    const coversLargeArea = (rect.width >= vw * 0.35 && rect.height >= vh * 0.25) ||
+                           (rect.width * rect.height >= vw * vh * 0.15);
+
+    if ((pos === 'fixed' || pos === 'absolute') && coversLargeArea) {
+      return true;
+    }
+
+    // 7. Sticky bottom or top ad bars (like #a1rmqtdyf)
+    if (pos === 'fixed' && rect.width >= vw * 0.5 && (rect.top <= 15 || rect.bottom >= vh - 15)) {
+      return true;
+    }
+
+    // 8. Elements matching popup/modal keywords with elevated z-index
+    const classAndId = `${el.className || ''} ${el.id || ''}`;
+    if ((pos === 'fixed' || pos === 'absolute') && (!isNaN(zIndex) && zIndex >= 20)) {
+      if (/modal|overlay|backdrop|popup|interstitial|takeover|consent|cookie|dialog|notice|promo|wrapper|blox|kln/i.test(classAndId) ||
+          el.getAttribute('role') === 'dialog' ||
+          el.getAttribute('role') === 'alertdialog' ||
+          tag === 'DIALOG') {
+        return true;
+      }
+    }
+
+    // 9. Standard ad container naming
+    if ((pos === 'fixed' || pos === 'absolute') && AD_CONTAINER_RE.test(classAndId)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function purgeCoveringOverlays() {
+    const extractedAds = [];
+    const handled = new Set();
+
+    const candidates = document.querySelectorAll(
+      '[data-shb], [data-area], [data-onopen], [data-onclose], [id^="bg-ssp-"], #custom-ad-slot, #a1rmqtdyf, .D1BnW, ._0Or05, .Kv1JU, .blox, dialog, [role="dialog"], [role="alertdialog"], [class*="overlay"], [class*="modal"], [class*="popup"], [class*="backdrop"], [class*="consent"], [class*="interstitial"], [class*="takeover"], [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"], [style*="2147483647"], [style*="2147483646"], [style*="inset: 0"], [style*="inset:0"], iframe[srcdoc], iframe[src*="nauticaldiscipline"], iframe[src*="composed-stop"]'
+    );
+
+    candidates.forEach((el) => {
+      const root = getOverlayRoot(el);
+      if (handled.has(root)) return;
+      handled.add(root);
+
+      if (isCoveringOverlay(root)) {
+        const rect = root.getBoundingClientRect();
+        const label = root.id || extractFirstClass(root) || 'overlay-ad';
+        extractedAds.push({
+          label,
+          width: Math.max(rect.width, 80),
+          height: Math.max(rect.height, 80),
+          area: Math.max(rect.width * rect.height, 6400),
+          tagName: root.tagName,
+        });
+        try { root.remove(); } catch (e) {}
+      }
+    });
+
+    // Also check direct children of body and documentElement
+    const directChildren = [...(document.body ? document.body.children : []), ...document.documentElement.children];
+    directChildren.forEach((child) => {
+      if (handled.has(child)) return;
+      handled.add(child);
+
+      if (isCoveringOverlay(child)) {
+        const rect = child.getBoundingClientRect();
+        const label = child.id || extractFirstClass(child) || 'overlay-ad';
+        extractedAds.push({
+          label,
+          width: Math.max(rect.width, 80),
+          height: Math.max(rect.height, 80),
+          area: Math.max(rect.width * rect.height, 6400),
+          tagName: child.tagName,
+        });
+        try { child.remove(); } catch (e) {}
+      }
+    });
+
+    // Reset potential body/html scroll locks from modals
+    document.documentElement.style.overflow = '';
+    document.body.style.overflow = '';
+
+    return extractedAds;
+  }
+
+  function startOverlayWatcher() {
+    if (popupObserver) return;
+
+    popupObserver = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            checkAndPurgeSingleOverlay(node);
+            if (node.querySelectorAll) {
+              node.querySelectorAll(
+                '[data-shb], [data-area], [data-onopen], [id^="bg-ssp-"], #custom-ad-slot, #a1rmqtdyf, .D1BnW, ._0Or05, .Kv1JU, .blox, dialog, [role="dialog"], [role="alertdialog"], [class*="overlay"], [class*="modal"], [class*="popup"], [style*="fixed"], [style*="2147483647"], iframe[srcdoc]'
+              ).forEach(checkAndPurgeSingleOverlay);
+            }
+          }
+        }
+      }
+    });
+
+    popupObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    // Periodic check every 250ms to catch elements styled or unhidden via JS
+    if (!overlayCheckInterval) {
+      overlayCheckInterval = setInterval(() => {
+        const purged = purgeCoveringOverlays();
+        for (const ad of purged) {
+          if (gameState === 'PLAYING') {
+            spawnBirdFromAd(ad);
+          } else {
+            loadingPurgedAds.push(ad);
+          }
+        }
+      }, 250);
+    }
+  }
+
+  function checkAndPurgeSingleOverlay(el) {
+    const root = getOverlayRoot(el);
+    if (isCoveringOverlay(root)) {
+      const rect = root.getBoundingClientRect();
+      const label = root.id || extractFirstClass(root) || 'popup-ad';
+      const ad = {
+        label,
+        width: Math.max(rect.width, 80),
+        height: Math.max(rect.height, 80),
+        area: Math.max(rect.width * rect.height, 6400),
+        tagName: root.tagName,
+      };
+
+      try { root.remove(); } catch (e) {}
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+
+      if (gameState === 'PLAYING') {
+        spawnBirdFromAd(ad);
+      } else {
+        loadingPurgedAds.push(ad);
+      }
+    }
+  }
+
+  function spawnBirdFromAd(ad) {
+    const vw = canvas ? canvas.width : window.innerWidth;
+    const vh = canvas ? canvas.height : window.innerHeight;
+    const minDim = Math.min(vw, vh);
+    const minSize = minDim * MIN_BIRD_SIZE_PCT;
+    const maxSize = minDim * MAX_BIRD_SIZE_PCT;
+
+    // Size based on area (popups are large -> smaller agile bird)
+    const size = Math.max(minSize, Math.min(maxSize, minDim * 0.08));
+    const points = Math.round(50 + Math.random() * 50);
+
+    const texture = createBirdTexture(ad, size);
+    const directionAngle = Math.floor(Math.random() * 360) + 1;
+
+    // Spawn from edge
+    const fromLeft = Math.random() > 0.5;
+    const x = fromLeft ? -size : vw + size;
+    const y = Math.random() * (vh - size * 2 - 60) + 60;
+
+    const newBird = {
+      id: birds.length,
+      x, y,
+      size,
+      speed: BIRD_SPEED * (0.8 + Math.random() * 0.4),
+      directionAngle,
+      lastDirChange: Date.now(),
+      a1: ZIGZAG_A1 * (0.7 + Math.random() * 0.6),
+      f1: ZIGZAG_F1 * (0.8 + Math.random() * 0.4),
+      a2: ZIGZAG_A2 * (0.6 + Math.random() * 0.8),
+      f2: ZIGZAG_F2 * (0.7 + Math.random() * 0.6),
+      phase: Math.random() * Math.PI * 2,
+      points,
+      alive: true,
+      texture,
+      label: ad.label,
+      tagName: ad.tagName,
+      color: BIRD_COLORS[birds.length % BIRD_COLORS.length],
+      rotation: (directionAngle * Math.PI) / 180,
+      wingPhase: Math.random() * Math.PI * 2,
+      wingSpeed: 0.15 + Math.random() * 0.1,
+    };
+
+    birds.push(newBird);
+    totalBirds++;
+
+    // Notification popup particle
+    particles.push({
+      x: vw / 2,
+      y: 70,
+      vx: 0,
+      vy: -0.6,
+      life: 60,
+      maxLife: 60,
+      isText: true,
+      text: `🚨 Intercepted Popup Ad! (+1 Target)`,
+      color: COLOR_AMBER,
+      size: 0,
+    });
+  }
+
+  // ═══════════════════════════════════════════════
+  //  ANTI-NEW-TAB AD BLOCKER IN GAME TAB
+  // ═══════════════════════════════════════════════
+  function preventWindowOpenInPage() {
+    try {
+      const script = document.createElement('script');
+      script.textContent = `
+        (() => {
+          try {
+            if (!window.__adsniper_orig_open) {
+              window.__adsniper_orig_open = window.open;
+            }
+            const noopOpen = function(url, target, features) {
+              console.warn('[AdSniper] Blocked ad script from opening new tab:', url);
+              return null;
+            };
+            window.open = noopOpen;
+            try { if (window.top) window.top.open = noopOpen; } catch (e) {}
+            try { if (window.parent) window.parent.open = noopOpen; } catch (e) {}
+
+            window.addEventListener('message', function(e) {
+              if (e.data && (e.data.$G$ || (typeof e.data === 'object' && e.data.event === 'open'))) {
+                e.stopImmediatePropagation();
+                console.warn('[AdSniper] Blocked ad postMessage in page context:', e.data);
+              }
+            }, true);
+          } catch (err) {}
+        })();
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    } catch (e) {
+      console.warn('[AdSniper] Could not override window.open:', e);
+    }
+  }
+
+  function restoreWindowOpenInPage() {
+    try {
+      const script = document.createElement('script');
+      script.textContent = `
+        (() => {
+          if (window.__adsniper_orig_open) {
+            window.open = window.__adsniper_orig_open;
+            delete window.__adsniper_orig_open;
+          }
+        })();
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    } catch (e) { /* ignore */ }
+  }
+
+  function onGlobalClickPreventNewTab(e) {
+    const link = e.target && e.target.closest && e.target.closest('a[target="_blank"], a[target="_new"], a[href^="http"]');
+    if (link) {
+      if (link.target === '_blank' || link.target === '_new' || link.closest('[data-shb], [data-area], .D1BnW, #a1rmqtdyf')) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.warn('[AdSniper] Blocked link from opening new tab:', link.href);
+      }
+    }
+  }
 
   // ═══════════════════════════════════════════════
   //  AD SCANNER
@@ -88,18 +527,44 @@ window.AdSniperGame = (() => {
    * Scans the DOM for ad-like elements. Returns an array of
    * { label, width, height, area, color } objects.
    */
-  function scanForAds() {
-    const results = [];
+  async function scanForAds() {
+    // Collect all ads detected during the loading screen + fresh scan
+    const results = [...loadingPurgedAds];
+    loadingPurgedAds = [];
     const seen = new WeakSet();
+
+    // 1. Purge existing covering overlays & popups and treat them as ads
+    const overlayAds = purgeCoveringOverlays();
+    for (const oAd of overlayAds) {
+      results.push(oAd);
+    }
+
+    let adHosts = [];
+    let adPatterns = [];
+    try {
+      const stored = await chrome.storage.local.get(['adHosts', 'adPatterns']);
+      adHosts = stored.adHosts || [];
+      adPatterns = stored.adPatterns || [];
+    } catch (e) { /* storage fallback */ }
+
+    function isBlockedUrl(url) {
+      if (!url) return false;
+      let hostname = '';
+      try { hostname = new URL(url).hostname; } catch (e) { return false; }
+      if (adHosts.some((h) => hostname === h || hostname.endsWith(`.${h}`))) return true;
+      const lower = url.toLowerCase();
+      return adPatterns.some((p) => lower.includes(p.toLowerCase()));
+    }
 
     // Scan iframes
     document.querySelectorAll('iframe').forEach((iframe) => {
       if (seen.has(iframe)) return;
-      const src = (iframe.src || iframe.dataset?.src || '').toLowerCase();
+      const src = (iframe.src || (iframe.dataset && iframe.dataset.src) || '').toLowerCase();
       const label = `${iframe.className || ''} ${iframe.id || ''} ${iframe.name || ''}`;
 
       const isAd = AD_CONTAINER_RE.test(label) ||
-                   AD_IFRAME_PATS.some((p) => src.includes(p));
+                   AD_IFRAME_PATS.some((p) => src.includes(p)) ||
+                   isBlockedUrl(iframe.src);
 
       if (isAd) {
         seen.add(iframe);
@@ -143,7 +608,7 @@ window.AdSniperGame = (() => {
       if (seen.has(el)) return;
       const src = (el.src || el.getAttribute('data') || '').toLowerCase();
 
-      if (AD_IFRAME_PATS.some((p) => src.includes(p))) {
+      if (AD_IFRAME_PATS.some((p) => src.includes(p)) || isBlockedUrl(src)) {
         seen.add(el);
         const rect = el.getBoundingClientRect();
         if (rect.width > 5 && rect.height > 5) {
@@ -163,7 +628,7 @@ window.AdSniperGame = (() => {
 
   function extractDomain(url) {
     if (!url) return null;
-    try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return null; }
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return null; }
   }
 
   function extractFirstClass(el) {
@@ -206,11 +671,14 @@ window.AdSniperGame = (() => {
       // Create texture for this bird
       const texture = createBirdTexture(ad, size);
 
+      // Random starting direction angle: between 1 and 360 degrees
+      const directionAngle = Math.floor(Math.random() * 360) + 1;
+      const lastDirChange = Date.now() - Math.floor(Math.random() * 2500); // Stagger initial 3s timers
+
       // Spawn position: random edge
       const fromLeft = Math.random() > 0.5;
       const x = fromLeft ? -size : vw + size;
-      const y = Math.random() * (vh - size * 2) + size;
-      const direction = fromLeft ? 1 : -1;
+      const y = Math.random() * (vh - size * 2 - 60) + 60;
 
       // Zigzag parameters — slight randomization for variety
       const a1 = ZIGZAG_A1 * (0.7 + Math.random() * 0.6);
@@ -221,9 +689,9 @@ window.AdSniperGame = (() => {
       return {
         id: i,
         x, y,
-        baseY: y,
         size,
-        direction,
+        directionAngle,
+        lastDirChange,
         speed: BIRD_SPEED * (0.8 + Math.random() * 0.4),
         a1, f1, a2, f2,
         phase: Math.random() * Math.PI * 2,
@@ -233,7 +701,7 @@ window.AdSniperGame = (() => {
         label: ad.label,
         tagName: ad.tagName,
         color: BIRD_COLORS[i % BIRD_COLORS.length],
-        rotation: 0,
+        rotation: (directionAngle * Math.PI) / 180,
         // Wing flap animation
         wingPhase: Math.random() * Math.PI * 2,
         wingSpeed: 0.15 + Math.random() * 0.1,
@@ -317,39 +785,70 @@ window.AdSniperGame = (() => {
   function updateBirds() {
     const vw = canvas.width;
     const vh = canvas.height;
+    const now = Date.now();
 
     for (const bird of birds) {
       if (!bird.alive) continue;
 
-      // Horizontal movement
-      bird.x += bird.speed * bird.direction;
-
-      // Dual-component zigzag vertical motion
-      const t = frameCount + bird.phase;
-      const yOffset = bird.a1 * Math.sin(bird.f1 * t) +
-                      bird.a2 * Math.sin(bird.f2 * t);
-      bird.y = bird.baseY + yOffset;
-
-      // Clamp Y to viewport
-      bird.y = Math.max(bird.size / 2, Math.min(vh - bird.size / 2, bird.y));
-
-      // Slight rotation based on vertical velocity
-      const yVel = bird.a1 * bird.f1 * Math.cos(bird.f1 * t) +
-                   bird.a2 * bird.f2 * Math.cos(bird.f2 * t);
-      bird.rotation = yVel * 0.02 * bird.direction;
-
-      // Wing flap
-      bird.wingPhase += bird.wingSpeed;
-
-      // Respawn when fully off screen
-      if ((bird.direction > 0 && bird.x > vw + bird.size * 2) ||
-          (bird.direction < 0 && bird.x < -bird.size * 2)) {
-        // Respawn from opposite edge
-        bird.direction *= -1;
-        bird.x = bird.direction > 0 ? -bird.size : vw + bird.size;
-        bird.baseY = Math.random() * (vh - bird.size * 2) + bird.size;
-        bird.phase = Math.random() * Math.PI * 2;
+      // Requirement: Change movement of the bird every 3 sec by using the logic:
+      // random number between 1-360 where number represents the direction of bird.
+      if (now - bird.lastDirChange >= 3000) {
+        bird.directionAngle = Math.floor(Math.random() * 360) + 1;
+        bird.lastDirChange = now;
       }
+
+      // Convert direction angle to radians
+      let rad = (bird.directionAngle * Math.PI) / 180;
+
+      // Directional velocity with constant speed
+      const vx = Math.cos(rad) * bird.speed;
+      const vy = Math.sin(rad) * bird.speed;
+
+      // Normal (perpendicular) vector for zigzag flutter
+      const nx = -Math.sin(rad);
+      const ny = Math.cos(rad);
+
+      // Dual-component zigzag flutter velocity
+      const t = frameCount + bird.phase;
+      const zigzagVel = (bird.a1 * bird.f1 * Math.cos(bird.f1 * t) +
+                         bird.a2 * bird.f2 * Math.cos(bird.f2 * t)) * 0.5;
+
+      bird.x += vx + nx * zigzagVel;
+      bird.y += vy + ny * zigzagVel;
+
+      // Screen boundary handling (bounce back so birds stay on screen)
+      const half = bird.size / 2;
+      let bounced = false;
+
+      if (bird.x < half) {
+        bird.x = half;
+        bird.directionAngle = Math.round((180 - bird.directionAngle + 360) % 360) || 360;
+        bounced = true;
+      } else if (bird.x > vw - half) {
+        bird.x = vw - half;
+        bird.directionAngle = Math.round((180 - bird.directionAngle + 360) % 360) || 360;
+        bounced = true;
+      }
+
+      if (bird.y < half + 42) { // Stay below top HUD
+        bird.y = half + 42;
+        bird.directionAngle = Math.round((360 - bird.directionAngle + 360) % 360) || 360;
+        bounced = true;
+      } else if (bird.y > vh - half) {
+        bird.y = vh - half;
+        bird.directionAngle = Math.round((360 - bird.directionAngle + 360) % 360) || 360;
+        bounced = true;
+      }
+
+      if (bounced) {
+        rad = (bird.directionAngle * Math.PI) / 180;
+      }
+
+      // Bird faces direction of flight
+      bird.rotation = rad;
+
+      // Wing flap animation
+      bird.wingPhase += bird.wingSpeed;
     }
   }
 
@@ -420,6 +919,98 @@ window.AdSniperGame = (() => {
     }
   }
 
+  // ═══════════════════════════════════════════════
+  //  FIREWORKS ENGINE (ACCURACY > 80%)
+  // ═══════════════════════════════════════════════
+  const FIREWORK_COLORS = [
+    '#f59e0b', '#fbbf24', '#38bdf8', '#4ade80',
+    '#f472b6', '#a855f7', '#ec4899', '#ef4444',
+    '#10b981', '#06b6d4', '#eab308', '#ffffff'
+  ];
+
+  function spawnFireworkBurst(x, y) {
+    const color = FIREWORK_COLORS[Math.floor(Math.random() * FIREWORK_COLORS.length)];
+    const sparkCount = 28 + Math.floor(Math.random() * 16);
+
+    for (let i = 0; i < sparkCount; i++) {
+      const angle = (Math.PI * 2 * i) / sparkCount + (Math.random() - 0.5) * 0.35;
+      const speed = 2.5 + Math.random() * 6;
+      fireworks.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 45 + Math.floor(Math.random() * 25),
+        maxLife: 70,
+        color,
+        size: 2.5 + Math.random() * 2.5,
+      });
+    }
+
+    // Flash light particle at burst center
+    fireworks.push({
+      x, y,
+      vx: 0, vy: 0,
+      life: 8, maxLife: 8,
+      color: '#ffffff',
+      size: 16,
+    });
+  }
+
+  function updateFireworks(vw, vh, cx, cy) {
+    fireworkSpawnTimer++;
+
+    // Launch a firework burst every 24 frames
+    if (fireworkSpawnTimer % 24 === 0) {
+      const zone = Math.random();
+      let fx, fy;
+      if (zone < 0.35 && cx > 300) {
+        // Left flank
+        fx = Math.random() * (cx - 280) + 40;
+        fy = Math.random() * (vh * 0.7) + 50;
+      } else if (zone < 0.7 && vw - cx > 300) {
+        // Right flank
+        fx = cx + 280 + Math.random() * (vw - cx - 320);
+        fy = Math.random() * (vh * 0.7) + 50;
+      } else {
+        // Top area above card
+        fx = Math.random() * (vw - 120) + 60;
+        fy = Math.random() * Math.max(80, cy - 230) + 30;
+      }
+      spawnFireworkBurst(fx, fy);
+    }
+
+    for (let i = fireworks.length - 1; i >= 0; i--) {
+      const f = fireworks[i];
+      f.x += f.vx;
+      f.y += f.vy;
+      f.vy += 0.08; // Gravity
+      f.vx *= 0.98; // Air drag
+      f.vy *= 0.98;
+      f.life--;
+      if (f.life <= 0) fireworks.splice(i, 1);
+    }
+  }
+
+  function renderFireworks() {
+    for (const f of fireworks) {
+      const alpha = f.life / f.maxLife;
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha * (0.85 + Math.random() * 0.15)));
+      ctx.fillStyle = f.color;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.size * (0.5 + alpha * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sparkle glow
+      if (f.size > 3) {
+        ctx.globalAlpha = alpha * 0.3;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.size * 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   let _lastScore = 0;
   function getLastScore() { return _lastScore; }
 
@@ -443,6 +1034,7 @@ window.AdSniperGame = (() => {
     } else {
       combo = 1;
     }
+    bestCombo = Math.max(bestCombo, combo);
     lastHitTime = now;
 
     const multiplier = getComboMultiplier();
@@ -616,11 +1208,18 @@ window.AdSniperGame = (() => {
       ctx.fillText(`×${multiplier} COMBO`, 200, cy);
     }
 
-    // Birds remaining
+    // Birds remaining, Misses & Multikills
     ctx.fillStyle = COLOR_TEXT;
     ctx.font = `13px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(`🐦 ${birdsHit}/${totalBirds} Birds`, vw / 2, cy);
+    let centerText = `🐦 ${birdsHit}/${totalBirds} Birds`;
+    if (shotsMissed > 0) {
+      centerText += `  |  ❌ ${shotsMissed} Missed`;
+    }
+    if (multikillCount > 0) {
+      centerText += `  |  ⚡ ${multikillCount} Multikill${multikillCount > 1 ? 's' : ''}`;
+    }
+    ctx.fillText(centerText, vw / 2, cy);
 
     // Exit hint
     ctx.fillStyle = COLOR_MUTED;
@@ -679,51 +1278,150 @@ window.AdSniperGame = (() => {
   function renderGameOver(vw, vh) {
     gameOverAlpha = Math.min(1, gameOverAlpha + 0.02);
 
-    ctx.globalAlpha = gameOverAlpha * 0.85;
-    ctx.fillStyle = 'rgba(15, 15, 23, 0.9)';
-    ctx.fillRect(0, 0, vw, vh);
-    ctx.globalAlpha = gameOverAlpha;
-
     const cx = vw / 2;
     const cy = vh / 2;
 
+    const totalShots = birdsHit + shotsMissed;
+    const accuracy = totalShots > 0 ? Math.round((birdsHit / totalShots) * 100) : (totalBirds > 0 ? 0 : 100);
+    const isHighAccuracy = accuracy > 80;
+
+    // Dark backdrop overlay
+    ctx.globalAlpha = gameOverAlpha * 0.88;
+    ctx.fillStyle = 'rgba(15, 15, 23, 0.92)';
+    ctx.fillRect(0, 0, vw, vh);
+
+    // Render celebratory fireworks around results if accuracy > 80%
+    if (isHighAccuracy) {
+      renderFireworks();
+    }
+
+    ctx.globalAlpha = gameOverAlpha;
+
+    const cardW = 500;
+    const cardH = 430;
+
     // Card background
     ctx.fillStyle = COLOR_HUD_BG;
-    roundRect(ctx, cx - 200, cy - 140, 400, 280, 16);
+    roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 16);
     ctx.fill();
 
-    ctx.strokeStyle = COLOR_ACCENT;
-    ctx.lineWidth = 2;
-    roundRect(ctx, cx - 200, cy - 140, 400, 280, 16);
+    // Card border (golden glow if accuracy > 80%)
+    ctx.strokeStyle = isHighAccuracy ? '#fbbf24' : COLOR_ACCENT;
+    ctx.lineWidth = isHighAccuracy ? 3 : 2;
+    roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 16);
     ctx.stroke();
 
+    // High accuracy celebration banner
+    if (isHighAccuracy) {
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✨ 🏆 SHARPSHOOTER BONUS! (+80% ACCURACY) 🏆 ✨', cx, cy - 180);
+    }
+
     // Title
-    ctx.fillStyle = COLOR_GREEN;
+    ctx.fillStyle = isHighAccuracy ? '#fbbf24' : COLOR_GREEN;
     ctx.font = `bold 28px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('🎯 GAME OVER', cx, cy - 90);
+    ctx.fillText('🎯 GAME OVER', cx, isHighAccuracy ? cy - 150 : cy - 160);
 
     // Score
     ctx.fillStyle = COLOR_TEXT;
-    ctx.font = `bold 20px 'Segoe UI', system-ui, sans-serif`;
-    ctx.fillText(`Score: ${score.toLocaleString()}`, cx, cy - 40);
+    ctx.font = `bold 22px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`Score: ${score.toLocaleString()}`, cx, isHighAccuracy ? cy - 114 : cy - 122);
 
-    // Stats
-    ctx.fillStyle = COLOR_MUTED;
+    // Stats Grid
     ctx.font = `14px 'Segoe UI', system-ui, sans-serif`;
-    ctx.fillText(`Birds Hit: ${birdsHit}/${totalBirds}`, cx, cy);
-    ctx.fillText(`Best Combo: ×${Math.max(1, combo)}`, cx, cy + 28);
 
-    // Accuracy
-    const accuracy = totalBirds > 0 ? Math.round((birdsHit / totalBirds) * 100) : 0;
+    // Row 1: Birds Hit & Shots Missed
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.textAlign = 'left';
+    ctx.fillText(`🐦 Birds Hit:`, cx - 185, cy - 70);
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.fillText(`${birdsHit} / ${totalBirds}`, cx - 70, cy - 70);
+
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`❌ Shots Missed:`, cx + 30, cy - 70);
+    ctx.fillStyle = shotsMissed === 0 ? COLOR_GREEN : COLOR_RED;
+    ctx.fillText(`${shotsMissed}`, cx + 165, cy - 70);
+
+    // Row 2: Accuracy & Best Combo
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`🎯 Accuracy:`, cx - 185, cy - 40);
     ctx.fillStyle = accuracy >= 80 ? COLOR_GREEN : accuracy >= 50 ? COLOR_AMBER : COLOR_RED;
-    ctx.fillText(`Accuracy: ${accuracy}%`, cx, cy + 56);
+    ctx.fillText(`${accuracy}%`, cx - 70, cy - 40);
 
-    // Exit instructions
-    ctx.fillStyle = COLOR_ACCENT;
-    ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
-    ctx.fillText('Press ESC or click to exit', cx, cy + 100);
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`🔥 Best Combo:`, cx + 30, cy - 40);
+    ctx.fillStyle = COLOR_AMBER;
+    ctx.fillText(`×${Math.max(1, bestCombo)}`, cx + 165, cy - 40);
+
+    // Row 3: Double Kills & Triple Kills
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`⚡ Double Kills:`, cx - 185, cy - 10);
+    ctx.fillStyle = doubleKills > 0 ? COLOR_AMBER : COLOR_MUTED;
+    ctx.fillText(`${doubleKills}`, cx - 70, cy - 10);
+
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`🔥 Triple Kills:`, cx + 30, cy - 10);
+    ctx.fillStyle = tripleKills > 0 ? COLOR_AMBER : COLOR_MUTED;
+    ctx.fillText(`${tripleKills}`, cx + 165, cy - 10);
+
+    // Row 4: Multi Kills (4+) & Total Shots
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`💥 Multi Kills (4+):`, cx - 185, cy + 20);
+    ctx.fillStyle = multiKills > 0 ? COLOR_AMBER : COLOR_MUTED;
+    ctx.fillText(`${multiKills}`, cx - 70, cy + 20);
+
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.fillText(`🔫 Total Shots:`, cx + 30, cy + 20);
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.fillText(`${shotsFired}`, cx + 165, cy + 20);
+
+    // Row 5: Total Multikills Summary
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.textAlign = 'center';
+    ctx.font = `12px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`⚡ Total Multikills: ${multikillCount}  (Double: ${doubleKills} | Triple: ${tripleKills} | 4+: ${multiKills})`, cx, cy + 54);
+
+    // Quit Game Button
+    const btnW = 180;
+    const btnH = 40;
+    const btnX = cx - btnW / 2;
+    const btnY = cy + 86;
+    quitButtonBounds = { x: btnX, y: btnY, w: btnW, h: btnH };
+
+    const isHover = mouseX >= btnX && mouseX <= btnX + btnW &&
+                    mouseY >= btnY && mouseY <= btnY + btnH;
+
+    if (canvas) {
+      canvas.style.cursor = isHover ? 'pointer' : 'default';
+    }
+
+    // Button Background
+    ctx.fillStyle = isHover ? '#dc2626' : 'rgba(239, 68, 68, 0.25)';
+    roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+    ctx.fill();
+
+    // Button Border
+    ctx.strokeStyle = isHover ? '#f87171' : '#ef4444';
+    ctx.lineWidth = 2;
+    roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+    ctx.stroke();
+
+    // Button Text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold 15px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🚪 Quit Game', cx, btnY + btnH / 2);
+
+    // Key hint below button
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('or press [ESC]', cx, btnY + btnH + 16);
 
     ctx.globalAlpha = 1;
   }
@@ -735,6 +1433,12 @@ window.AdSniperGame = (() => {
   function gameLoop() {
     frameCount++;
 
+    // Ensure canvas stays full screen even if innerHeight was small during initial render
+    if (canvas && (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight)) {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
     if (gameState === 'PLAYING') {
       updateBirds();
       updateParticles();
@@ -745,6 +1449,13 @@ window.AdSniperGame = (() => {
       }
     } else if (gameState === 'GAME_OVER') {
       updateParticles();
+      const totalShots = birdsHit + shotsMissed;
+      const accuracy = totalShots > 0 ? Math.round((birdsHit / totalShots) * 100) : (totalBirds > 0 ? 0 : 100);
+      if (accuracy > 80) {
+        const vw = canvas ? canvas.width : window.innerWidth;
+        const vh = canvas ? canvas.height : window.innerHeight;
+        updateFireworks(vw, vh, vw / 2, vh / 2);
+      }
     }
 
     render();
@@ -762,7 +1473,14 @@ window.AdSniperGame = (() => {
 
   function onClick(e) {
     if (gameState === 'GAME_OVER') {
-      endGame();
+      // ONLY clicking the Quit Game button or pressing ESC should close the gaming screen
+      const clickX = e.clientX;
+      const clickY = e.clientY;
+      const b = quitButtonBounds;
+      if (clickX >= b.x && clickX <= b.x + b.w &&
+          clickY >= b.y && clickY <= b.y + b.h) {
+        endGame();
+      }
       return;
     }
 
@@ -774,9 +1492,10 @@ window.AdSniperGame = (() => {
     const clickX = e.clientX;
     const clickY = e.clientY;
 
-    // Check hit on any alive bird (AABB collision)
-    let hit = false;
-    // Check birds in reverse order (last drawn = visually on top)
+    shotsFired++;
+
+    // Check hit on all alive birds under crosshair (piercing / multikill)
+    const hitBirds = [];
     for (let i = birds.length - 1; i >= 0; i--) {
       const bird = birds[i];
       if (!bird.alive) continue;
@@ -784,13 +1503,50 @@ window.AdSniperGame = (() => {
       const halfSize = bird.size / 2;
       if (clickX >= bird.x - halfSize && clickX <= bird.x + halfSize &&
           clickY >= bird.y - halfSize && clickY <= bird.y + halfSize) {
-        handleHit(bird);
-        hit = true;
-        break; // Only hit one bird per click
+        hitBirds.push(bird);
       }
     }
 
-    if (!hit) {
+    if (hitBirds.length > 0) {
+      // Eliminate all aligned birds
+      for (const bird of hitBirds) {
+        handleHit(bird);
+      }
+
+      // Multikill bonus and announcement if multiple birds were aligned
+      if (hitBirds.length > 1) {
+        multikillCount++;
+        let killText = '⚡ DOUBLE KILL!';
+        if (hitBirds.length === 2) {
+          doubleKills++;
+          killText = '⚡ DOUBLE KILL!';
+        } else if (hitBirds.length === 3) {
+          tripleKills++;
+          killText = '🔥 TRIPLE KILL!';
+        } else {
+          multiKills++;
+          killText = `💥 MULTIKILL ×${hitBirds.length}!`;
+        }
+
+        const bonusPoints = hitBirds.length * 100;
+        score += bonusPoints;
+
+        // Floating multikill announcement
+        particles.push({
+          x: clickX,
+          y: clickY - 40,
+          vx: 0,
+          vy: -1.2,
+          life: 60,
+          maxLife: 60,
+          isText: true,
+          text: `${killText} (+${bonusPoints})`,
+          color: COLOR_AMBER,
+          size: 0,
+        });
+      }
+    } else {
+      shotsMissed++;
       handleMiss();
       // Miss particle (small red puff)
       for (let i = 0; i < 4; i++) {
@@ -833,15 +1589,43 @@ window.AdSniperGame = (() => {
     // Reset state
     score = 0;
     combo = 0;
+    bestCombo = 0;
     lastHitTime = 0;
     birdsHit = 0;
+    shotsFired = 0;
+    shotsMissed = 0;
+    multikillCount = 0;
+    doubleKills = 0;
+    tripleKills = 0;
+    multiKills = 0;
+    fireworks = [];
+    fireworkSpawnTimer = 0;
+    quitButtonBounds = { x: 0, y: 0, w: 0, h: 0 };
     frameCount = 0;
     particles = [];
     gameOverAlpha = 0;
     loadingProgress = 0;
     loadingMessage = 'Scanning for ads...';
+    loadingPurgedAds = [];
 
-    // Create full-screen canvas
+    // 1. Inject anti-overlay CSS immediately
+    injectAntiOverlayStyles();
+
+    // 2. Prevent window.open and ad postMessage immediately
+    preventWindowOpenInPage();
+    document.addEventListener('click', onGlobalClickPreventNewTab, true);
+    window.addEventListener('message', onInterceptAdMessage, true);
+
+    // 3. Start overlay watcher immediately
+    startOverlayWatcher();
+
+    // 4. Purge existing overlays right now
+    const initialOverlays = purgeCoveringOverlays();
+    for (const ad of initialOverlays) {
+      loadingPurgedAds.push(ad);
+    }
+
+    // 5. Create full-screen canvas with MAXIMUM Z-INDEX
     canvas = document.createElement('canvas');
     canvas.id = 'adsniper-game-canvas';
     canvas.width = window.innerWidth;
@@ -852,11 +1636,16 @@ window.AdSniperGame = (() => {
       left: '0',
       width: '100vw',
       height: '100vh',
-      zIndex: '2147483646',
+      zIndex: '2147483647',
       cursor: 'none',
+      pointerEvents: 'auto',
     });
     document.documentElement.appendChild(canvas);
     ctx = canvas.getContext('2d');
+
+    // Center mouse crosshair initially
+    mouseX = window.innerWidth / 2;
+    mouseY = window.innerHeight / 2;
 
     // Start game loop (shows loading screen)
     gameState = 'LOADING';
@@ -868,9 +1657,25 @@ window.AdSniperGame = (() => {
     document.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('resize', onResize);
 
-    // Animate loading progress
+    // Notify service worker of active game tab to suppress new tabs
+    try {
+      chrome.runtime.sendMessage({ type: 'SNIPING_GAME_STARTED' });
+    } catch (e) { /* ignore */ }
+
+    // Animate loading progress & purge overlays continuously throughout loading
     const loadStart = Date.now();
     const loadInterval = setInterval(() => {
+      // Continuously purge overlays during the entire loading screen
+      const purged = purgeCoveringOverlays();
+      for (const ad of purged) {
+        loadingPurgedAds.push(ad);
+      }
+
+      // Ensure canvas is always topmost child of document.documentElement
+      if (canvas && canvas.parentElement && canvas.parentElement.lastElementChild !== canvas) {
+        canvas.parentElement.appendChild(canvas);
+      }
+
       const elapsed = Date.now() - loadStart;
       loadingProgress = Math.min(0.9, elapsed / LOADING_DELAY_MS);
 
@@ -887,21 +1692,26 @@ window.AdSniperGame = (() => {
     await new Promise((r) => setTimeout(r, LOADING_DELAY_MS));
 
     // Scan for ads
-    const adData = scanForAds();
+    let adData = await scanForAds();
     clearInterval(loadInterval);
 
     if (adData.length === 0) {
-      // No ads found — show message and exit
-      loadingProgress = 1;
-      loadingMessage = 'No ad components found on this page!';
-      await new Promise((r) => setTimeout(r, 2000));
-      endGame();
-      return;
+      // Fallback: spawn mock ad targets so game is always playable
+      loadingProgress = 0.9;
+      loadingMessage = 'No live ads detected — spawning 5 training targets!';
+      await new Promise((r) => setTimeout(r, 1200));
+      adData = [
+        { label: 'tracker.doubleclick.net', width: 300, height: 250, area: 75000, tagName: 'IFRAME' },
+        { label: 'banner.adservice.google.com', width: 728, height: 90, area: 65520, tagName: 'DIV' },
+        { label: 'sponsor.outbrain.com', width: 160, height: 600, area: 96000, tagName: 'IFRAME' },
+        { label: 'pixel.criteo.com', width: 50, height: 50, area: 2500, tagName: 'IMG' },
+        { label: 'ad-slot.taboola.com', width: 468, height: 60, area: 28080, tagName: 'DIV' },
+      ];
     }
 
     // Create birds
     loadingProgress = 0.95;
-    loadingMessage = `Found ${adData.length} ad${adData.length > 1 ? 's' : ''} — preparing targets...`;
+    loadingMessage = `Found ${adData.length} target${adData.length > 1 ? 's' : ''} — preparing...`;
     await new Promise((r) => setTimeout(r, 500));
 
     birds = createBirds(adData);
@@ -919,6 +1729,24 @@ window.AdSniperGame = (() => {
    */
   function endGame() {
     gameState = null;
+
+    // Remove anti-overlay styles
+    removeAntiOverlayStyles();
+
+    // Stop overlay watcher
+    if (popupObserver) {
+      popupObserver.disconnect();
+      popupObserver = null;
+    }
+    if (overlayCheckInterval) {
+      clearInterval(overlayCheckInterval);
+      overlayCheckInterval = null;
+    }
+
+    // Restore new tab behaviors & ad message listener
+    document.removeEventListener('click', onGlobalClickPreventNewTab, true);
+    window.removeEventListener('message', onInterceptAdMessage, true);
+    restoreWindowOpenInPage();
 
     // Stop game loop
     if (animFrameId) {
@@ -942,21 +1770,25 @@ window.AdSniperGame = (() => {
     // Reset cursor
     document.body.style.cursor = '';
 
-    // Notify content script to restore blocking state
-    // (game runs in page main world, can't call chrome.* APIs directly)
-    window.postMessage({
-      type: 'ADSNIPER_GAME_ENDED',
-      score,
-      birdsHit,
-      totalBirds,
-    }, '*');
+    // Tell SW to restore pre-game blocking state
+    try {
+      chrome.runtime.sendMessage({ type: 'RESTORE_SNIPING_STATE' });
+    } catch (err) {
+      console.warn('[AdSniper Game] Failed to restore state:', err.message);
+    }
+
+    // Clean up game pending flag
+    chrome.storage.local.set({ snipingGamePending: false });
 
     // Clear references
     birds = [];
     particles = [];
+    fireworks = [];
+    loadingPurgedAds = [];
+    quitButtonBounds = { x: 0, y: 0, w: 0, h: 0 };
   }
 
   // Public API
-  return { launchGame, endGame };
+  return { launchGame, endGame, injectAntiOverlayStyles };
 
 })();

@@ -49,6 +49,24 @@ chrome.webRequest.onBeforeRequest.addListener(
 // ---------------------------------------------------------------------------
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await chrome.storage.local.remove(`requests_${tabId}`);
+  const { snipingActiveTabId } = await chrome.storage.local.get('snipingActiveTabId');
+  if (snipingActiveTabId === tabId) {
+    await chrome.storage.local.remove('snipingActiveTabId');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 2b. Block ads from opening new tabs while gaming
+// ---------------------------------------------------------------------------
+chrome.tabs.onCreated.addListener(async (newTab) => {
+  if (!newTab.openerTabId) return;
+  const { snipingActiveTabId } = await chrome.storage.local.get('snipingActiveTabId');
+  if (snipingActiveTabId && newTab.openerTabId === snipingActiveTabId) {
+    try {
+      console.log('[AdSniper] Closed unwanted popup tab opened by game tab:', newTab.id);
+      await chrome.tabs.remove(newTab.id);
+    } catch { /* Tab may already be closed */ }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -146,6 +164,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep channel open for async response
   }
 
+  // ── Track gaming tab to block ad popups from opening new tabs ──
+  if (message.type === 'SNIPING_GAME_STARTED') {
+    if (sender.tab && sender.tab.id) {
+      chrome.storage.local.set({ snipingActiveTabId: sender.tab.id });
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
   // ── Restore blocking state after sniping game ends ──
   if (message.type === 'RESTORE_SNIPING_STATE') {
     (async () => {
@@ -233,13 +260,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         }
 
+        // If newTabBlock was not active before game, remove the rules we activated
+        if (!snipingPreGameState.newTabBlockActive) {
+          const { newTabBlockRuleIds = [] } = await chrome.storage.local.get('newTabBlockRuleIds');
+          if (newTabBlockRuleIds.length > 0) {
+            await chrome.declarativeNetRequest.updateDynamicRules({
+              addRules: [],
+              removeRuleIds: newTabBlockRuleIds,
+            });
+            await chrome.storage.local.set({
+              newTabBlockActive: false,
+              newTabBlockRuleIds: [],
+            });
+          }
+        }
+
         // Update badge
         const allRules = await chrome.declarativeNetRequest.getDynamicRules();
         await chrome.action.setBadgeText({ text: allRules.length > 0 ? String(allRules.length) : '' });
         await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
 
         // Clean up saved state
-        await chrome.storage.local.remove('snipingPreGameState');
+        await chrome.storage.local.remove(['snipingPreGameState', 'snipingActiveTabId']);
         console.log('[AdSniper] Sniping game state restored successfully');
 
         sendResponse({ ok: true });

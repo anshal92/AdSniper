@@ -16,7 +16,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content/content.js"],
+      "js": ["content/sniper-game.js", "content/content.js"],
       "run_at": "document_idle"
     }
   ],
