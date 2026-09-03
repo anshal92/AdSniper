@@ -1,10 +1,10 @@
 # 🎯 AdSniper
 
-> **Surgical Ad Blocking, Cookie Control & Gamified Ad Sniping for Chrome (Manifest V3)**
+> **Surgical Ad Blocking, Cookie Control, On-Device AI Assistant (Gemini Nano) & Gamified Ad Sniping for Chrome (Manifest V3)**
 
-AdSniper is a powerful, privacy-first Chromium extension designed to give you surgical control over network traffic, intrusive popups, and cookies—while introducing a first-of-its-kind **Gamified Sniping Mode** that transforms irritating page ads into flying targets you can shoot down!
+AdSniper is a powerful, privacy-first Chromium extension designed to give you surgical control over network traffic, intrusive popups, and cookies—featuring an **on-device Gemini Nano AI Assistant** powered by Chrome's Built-in AI, alongside a first-of-its-kind **Gamified Sniping Mode** that transforms irritating page ads into flying targets you can shoot down!
 
-Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency declarative rule engines (`declarativeNetRequest`), heuristic DOM sanitization, and isolated Canvas overlays without dragging down browser performance.
+Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency declarative rule engines (`declarativeNetRequest`), heuristic DOM sanitization, isolated Canvas overlays, and local LLM execution without dragging down browser performance or sending your data to external servers.
 
 ---
 
@@ -18,7 +18,7 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
 
 ### 🚫 2. Intrusive Pop-up & Anti-Adblock Interceptor
 - **Block New Tab Ads**: Intercepts `main_frame` navigations and redirects to prevent deceptive links from spawning intrusive ad tabs.
-- **Full-Screen Overlay Neutralization**: Employs immediate CSS injection (`injectAntiOverlayStyles`) and DOM mutation observers to obliterate anti-adblock modals, transparent click-hijacking overlays, and interstitials (`data-shb`, PopCash, Adsterra, Monetag).
+- **Full-Screen Overlay Neutralization**: Employs immediate CSS injection (`injectAntiOverlayStyles`) and DOM mutation observers to obliterate anti-adblock modals, transparent click-hijacking overlays, floating video ads, and interstitials (`data-shb`, PopCash, Adsterra, Monetag).
 - **Ad Message Sandboxing**: Captures and cancels obfuscated `postMessage` triggers sent between ad iframes and parent windows.
 
 ### 🎯 3. Element Picker & iFrame Purger
@@ -40,6 +40,22 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
   - Real-time HUD displays score, combo, birds hit, and missed shots.
   - **Celebration Fireworks**: Scoring an accuracy of **> 80%** triggers a celebratory fireworks display around the results screen!
   - **Interactive Results Screen**: Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
+
+### 🤖 6. On-Device Gemini Nano AI Assistant & Autonomous MCP Tools
+- **100% Local Built-in AI**: Uses Chrome's native **Prompt API** (`window.ai.languageModel` / `LanguageModel`) to run Google's **Gemini Nano** directly on your device. Zero external cloud API calls, zero latency penalty, and zero private data leakage.
+- **Autonomous Model Context Protocol (MCP) Tools**:
+  - `tool_inspect_requests`: Produces instant forensic ad & tracker audit reports, decoding exfiltrated query parameters (Publisher IDs, Auction Bids, User Tracking UUIDs, Topics/FLEDGE data).
+  - `tool_remove_overlay`: Detects and scrubs anti-adblock modals, paywalls, sticky video overlays, and unfreezes locked body scrolling.
+  - `tool_add_block_rule`: Synthesizes dynamic DeclarativeNetRequest block rules from natural language (e.g. *"Block analytics.foo.com"*).
+  - `tool_hide_element_css`: Generates and injects custom CSS selector rules (`display: none !important`) to eliminate annoying banners and clutter.
+  - `tool_extract_clean_content`: Extracts clean, readable article text stripped of sidebars, ads, and widgets.
+  - `tool_toggle_feature`: Voice/text command shield switcher (`new_tab_block`, `mass_block`, `dom_cleanup`, etc.).
+- **Intent-First Deterministic Dispatcher**: Common commands (e.g., *"kill popups"*, *"audit trackers"*, *"remove on click new tab"*) execute with **0ms latency** via deterministic intent matching, guaranteeing browser action without waiting for model token generation.
+- **Resilient Heuristics Fallback**: Even if Chrome flags are disabled or Gemini Nano is still downloading, AdSniper automatically runs all MCP tools via local deterministic heuristics.
+- **Tri-State Status Indicator**:
+  - 🟢 **Blinking Green**: Nano Ready (or Heuristics Mode active & running).
+  - 🟡 **Pulsing Yellow**: Initializing or model downloading in Chrome components.
+  - 🔴 **Static Red**: AI engine offline / unavailable.
 
 ---
 
@@ -77,6 +93,78 @@ Look for the **Developer mode** toggle in the top-right corner of the Extensions
 
 ---
 
+## 🧠 How to Enable Chrome Built-in AI (Gemini Nano) & Flags
+
+AdSniper leverages Google's **Gemini Nano** via Chrome's native **Prompt API**. While AdSniper works immediately with its built-in **Heuristics Fallback Engine**, enabling Chrome's experimental flags unlocks generative on-device intelligence.
+
+### 1. Prerequisites
+- **Browser**: Google Chrome version **128+** (Dev, Canary, Beta, or Stable 131+).
+- **Storage**: At least **22 GB free disk space** on your primary OS drive (required by Chrome to provision the model container).
+- **GPU / Hardware**: Modern GPU with at least **4 GB VRAM**, or a recent CPU with DirectML / WebGPU support.
+- **Network**: An unmetered connection for the initial on-device model download (~1.5 GB - 2.5 GB).
+
+### 2. Configure Chrome Flags
+Open a new tab in Chrome and configure the following flags:
+
+1. **Enable the Prompt API**:
+   - Paste in your address bar:
+     ```text
+     chrome://flags/#prompt-api-for-gemini-nano
+     ```
+   - Set the dropdown to **Enabled** (or **Enabled on user gesture**).
+
+2. **Bypass Hardware Restrictions (Recommended)**:
+   - Paste in your address bar:
+     ```text
+     chrome://flags/#optimization-guide-on-device-model
+     ```
+   - Set the dropdown to **Enabled BypassPerfRequirement** (this ensures Chrome downloads Gemini Nano even if your device isn't on Google's strict GPU whitelist).
+
+3. **Relaunch Browser**:
+   - Click the **Relaunch** button at the bottom of the `chrome://flags` page to apply the settings.
+
+### 3. Download the Gemini Nano Model Component
+After relaunching, Chrome needs to download the model files to your machine:
+
+1. Navigate to:
+   ```text
+   chrome://components/
+   ```
+2. Press `Ctrl + F` and search for:
+   ```text
+   Optimization Guide On Device Model
+   ```
+3. Click **Check for update**.
+   - If the status displays `Component not downloaded` or `New`, Chrome will begin downloading the model.
+   - Wait until the version changes to a non-zero number (e.g., `2024.x.x.x`) and status shows **Up-to-date**.
+
+### 4. Verify Model Availability in DevTools
+You can test that the model is ready directly in the DevTools console:
+1. Open DevTools (`F12` or `Ctrl + Shift + I`) on any webpage.
+2. Switch to the **Console** tab and run:
+   ```javascript
+   await window.ai.languageModel.availability();
+   ```
+3. **Interpreting Results**:
+   - `'readily'`: Gemini Nano is fully downloaded, loaded in VRAM, and ready for instant use!
+   - `'after-download'`: Flags are enabled, but the model is still downloading. Run `await window.ai.languageModel.create();` in the console to trigger download progression.
+   - `'no'`: System hardware does not meet requirements, or `BypassPerfRequirement` flag was not set.
+
+### 5. Using AI Assistant in AdSniper
+1. Click the **AdSniper** extension icon in your toolbar.
+2. In the top action bar, click **✨ Enable AI**.
+3. Look at the status pill:
+   - 🟢 **Nano Ready**: Gemini Nano is running 100% on-device!
+   - 🟢 **Heuristics Mode**: Gemini Nano flags are inactive or downloading, but AdSniper's on-device heuristic engine is running all MCP tools seamlessly.
+   - 🟡 **Downloading X%**: Chrome is actively fetching model chunks.
+4. Try sample commands:
+   - Click **`🎯 Audit Trackers`** or type *"Audit suspicious tracking calls on this tab"*.
+   - Click **`🧹 Kill Overlays`** or type *"Kill popups and modals"*.
+   - Click **`📝 Reader View`** or type *"Extract clean article text"*.
+   - Type *"Block doubleclick.net"* or *"Stop new tab ads"*.
+
+---
+
 ## 🎮 How to Play Sniping Mode
 
 1. Navigate to any website containing ads.
@@ -100,6 +188,8 @@ AdSniper/
 ├── adsniper/
 │   ├── manifest.json              # Chrome Manifest V3 configuration
 │   ├── service-worker.js          # Background service worker (DNR & state management)
+│   ├── ai/
+│   │   └── nano-client.js         # Gemini Nano on-device AI client & MCP tool dispatcher
 │   ├── content/
 │   │   ├── content.js             # Content script (DOM sanitization & picker bridge)
 │   │   └── sniper-game.js         # Canvas 2D game engine (physics, targets & fireworks)
@@ -121,13 +211,15 @@ AdSniper/
 ## 🔒 Privacy & Permissions
 
 AdSniper is built with privacy at its core:
+- **100% Local On-Device AI**: All LLM queries and heuristic analyses run strictly on your local hardware using Gemini Nano. No prompt text, visited URLs, or network logs ever leave your machine.
 - **No Remote Tracking or Telemetry**: All network request logs and cookie analyses happen **100% locally** on your device.
 - **Manifest V3 Native**: Operates strictly within Google Chrome's latest security sandbox.
 - **Permissions Explained**:
   - `declarativeNetRequest`: Used to block ad and tracking requests at browser level.
   - `storage`: Used to save custom rules and user preferences locally.
   - `cookies`: Used to inspect and lock cookies on the active tab.
-  - `scripting` & `activeTab`: Used to inject the Element Picker and Sniping Mode canvas on user request.
+  - `scripting` & `activeTab`: Used to inject the Element Picker, Sniping Mode canvas, and DOM sanitizers on user request.
+  - `declarativeNetRequestFeedback`: Used in unpacked developer mode to provide hit counters and reactive DOM cleanup.
 
 ---
 
