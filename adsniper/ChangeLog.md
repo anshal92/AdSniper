@@ -4,6 +4,42 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ---
 
+## [2026-09-04] — System Prompt Settings Configuration & Intent Triggering Refinement
+
+### Added
+- **LLM System Prompt Configuration UI (⚙️ Gear Icon)**:
+  - Added a setting **⚙️ Gear button** directly in the AI Assistant header row (`#ai-settings-btn`).
+  - Added an interactive collapsible configuration panel (`#ai-settings-panel`) displaying the active system instructions sent to Gemini Nano.
+  - Added custom prompt persistence via `chrome.storage.local.set({ customSystemPrompt })`.
+  - Added **💾 Save & Apply** and **🔄 Reset Default** buttons with visual status indicators.
+  - Saving or resetting triggers `session.destroy()` so subsequent prompts hot-reload into fresh sessions with the new prompt.
+
+### Fixed
+- **Erroneous Audit Tool Execution on General Prompts**:
+  - **Root Cause**: Two issues caused general queries (e.g. *"Get me all anchor link"*) to trigger tracker audit reports:
+    1. `detectDirectIntent` audit regex had a loose fallback `lower.includes('tracker')`, which triggered whenever a query or explanation contained the word "tracker".
+    2. In `processPrompt()`, line 748 evaluated `this.detectDirectIntent(fullResponse)`. When Gemini Nano generated a natural conversational response discussing trackers or requests, the model's own words triggered `tool_inspect_requests` and replaced the reply with an audit report.
+  - **Resolved**:
+    - Removed `detectDirectIntent(fullResponse)` on the model output so generated text never triggers internal tool actions.
+    - Tightened `detectDirectIntent` audit regex to require explicit user action verbs (`audit trackers`, `inspect network`, `scan telemetry`), preventing false positives on general queries.
+    - Updated `DEFAULT_SYSTEM_PROMPT` with explicit boundaries: if a prompt is outside available ad-blocking/DNR tools (e.g. anchor links, general questions), the model must not execute any tool and must answer directly in natural language.
+
+---
+
+## [2026-09-04] — Fix Gemini Nano Availability Detection for Modern Prompt API
+
+### Fixed
+- **Nano Ready Detection (`checkAvailability` in `adsniper/ai/nano-client.js`)**:
+  - **Root Cause**: `checkAvailability()` only accepted the legacy preview status string `"readily"` (`if (avail === 'readily')`). In modern Chromium builds where Gemini Nano is installed and active (as reported by `chrome://on-device-internals`), `LanguageModel.availability()` returns `"available"`. This caused AdSniper to misclassify the active model as unsupported and drop into Heuristics Mode.
+  - **Resolved**:
+    - Expanded readiness checks in `checkAvailability()` to recognize `"available"`, `"readily"`, `"ready"`, and `true`.
+    - Added recognition for `"downloadable"` and `"downloading"` alongside `"after-download"`.
+    - Added direct session creation capability fallback (`lm.create()`) so that if the model is ready, it is immediately confirmed and activated.
+    - Updated `getOrCreateSession()` with graceful fallback tiers (`createOptions` -> `systemPrompt` only -> bare `create()`), preventing initialization crashes if sampling options are restricted.
+    - Updated `getLanguageModelAPI()` to search `globalThis.LanguageModel`, bare `LanguageModel`, and `window.LanguageModel` across all scopes.
+
+---
+
 ## [2026-09-03] — Gemini Nano LLM Implementation & Chrome Flags Documentation
 
 ### Added

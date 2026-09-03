@@ -42,15 +42,21 @@ class GeminiNanoClient {
    * Supports window.ai.languageModel, self.ai.languageModel, and global LanguageModel.
    */
   getLanguageModelAPI() {
+    if (typeof LanguageModel !== 'undefined') return LanguageModel;
+    if (typeof globalThis !== 'undefined') {
+      if (globalThis.LanguageModel) return globalThis.LanguageModel;
+      if (globalThis.ai && globalThis.ai.languageModel) return globalThis.ai.languageModel;
+      if (globalThis.ai && globalThis.ai.assistant) return globalThis.ai.assistant;
+    }
     if (typeof window !== 'undefined') {
+      if (window.LanguageModel) return window.LanguageModel;
       if (window.ai && window.ai.languageModel) return window.ai.languageModel;
       if (window.ai && window.ai.assistant) return window.ai.assistant;
-      if (window.LanguageModel) return window.LanguageModel;
     }
     if (typeof self !== 'undefined') {
+      if (self.LanguageModel) return self.LanguageModel;
       if (self.ai && self.ai.languageModel) return self.ai.languageModel;
       if (self.ai && self.ai.assistant) return self.ai.assistant;
-      if (self.LanguageModel) return self.LanguageModel;
     }
     return null;
   }
@@ -73,26 +79,94 @@ class GeminiNanoClient {
         avail = await lm.availability();
       } else if (typeof lm.capabilities === 'function') {
         const caps = await lm.capabilities();
-        avail = caps && caps.available;
+        avail = caps && (caps.available || caps.status);
       }
 
-      if (avail === 'readily') {
+      const isReady =
+        avail === 'readily' ||
+        avail === 'available' ||
+        avail === 'ready' ||
+        avail === true;
+
+      const isDownloading =
+        avail === 'after-download' ||
+        avail === 'downloadable' ||
+        avail === 'downloading';
+
+      if (isReady) {
         this.availabilityStatus = 'ready';
         this.statusMessage = 'Gemini Nano Ready (On-device)';
-      } else if (avail === 'after-download') {
+      } else if (isDownloading) {
         this.availabilityStatus = 'downloading';
         this.statusMessage = 'Model downloading via Chrome components...';
       } else {
+        // Direct test: check if we can create a session directly
+        try {
+          const testSession = await lm.create();
+          if (testSession) {
+            testSession.destroy();
+            this.availabilityStatus = 'ready';
+            this.statusMessage = 'Gemini Nano Ready (On-device)';
+            return { status: this.availabilityStatus, message: this.statusMessage };
+          }
+        } catch (e) {}
+
         this.availabilityStatus = 'unsupported';
-        this.statusMessage = 'Gemini Nano unavailable on this hardware/flag setup';
+        this.statusMessage = `Gemini Nano status: ${avail || 'unavailable'}`;
       }
     } catch (err) {
-      console.warn('[AdSniper AI] Availability check failed:', err);
+      console.warn('[AdSniper AI] Availability check failed, testing direct session creation:', err);
+      try {
+        const testSession = await lm.create();
+        if (testSession) {
+          testSession.destroy();
+          this.availabilityStatus = 'ready';
+          this.statusMessage = 'Gemini Nano Ready (On-device)';
+          return { status: this.availabilityStatus, message: this.statusMessage };
+        }
+      } catch (e) {}
+
       this.availabilityStatus = 'unsupported';
       this.statusMessage = 'Prompt API error: ' + err.message;
     }
 
     return { status: this.availabilityStatus, message: this.statusMessage, progress: this.downloadProgress };
+  }
+
+  static DEFAULT_SYSTEM_PROMPT = `You are AdSniper AI, an on-device Chrome extension assistant.
+You help users inspect network traffic, eliminate annoying ads/trackers, remove paywalls and popups, and control the page.
+
+You have access to the following MCP Actions:
+- tool_add_block_rule(pattern, reason): Adds a DeclarativeNetRequest block rule (e.g. pattern="||tracker.example.com").
+- tool_remove_overlay(): Removes anti-adblock modals, blur filters, and restores page scrolling.
+- tool_hide_element_css(selector, reason): Hides elements matching a CSS selector (display: none !important).
+- tool_extract_clean_content(): Extracts clean readable text of the page without ads/sidebars.
+- tool_inspect_requests(category): Audits recent network requests captured on the tab.
+- tool_toggle_feature(feature, state): Toggles 'mass_block', 'new_tab_block', 'dom_cleanup', or 'iframe_blocker'.
+
+Rules for executing tools:
+1. ONLY execute an action tool if the user's request explicitly matches one of the available tools above.
+2. If the user asks for general information, page questions, anchor links, text summaries, or anything outside of these specific tools, DO NOT call any tool. Answer the user directly and concisely in natural language.
+3. When an action IS appropriate, provide a concise explanation (1-2 sentences), followed immediately by an action block formatted exactly as:
+\`\`\`action
+{"tool": "tool_name", "args": {"arg1": "value"}}
+\`\`\`
+4. NEVER recommend installing other extensions (e.g. uBlock Origin, AdBlock).`;
+
+  /**
+   * Retrieves the active system prompt, honoring user-customized prompt from storage.
+   * @returns {Promise<string>}
+   */
+  async getSystemPrompt() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        const { customSystemPrompt } = await chrome.storage.local.get('customSystemPrompt');
+        if (customSystemPrompt && typeof customSystemPrompt === 'string' && customSystemPrompt.trim()) {
+          return customSystemPrompt.trim();
+        }
+      }
+    } catch (e) {}
+    return GeminiNanoClient.DEFAULT_SYSTEM_PROMPT;
   }
 
   /**
@@ -114,22 +188,7 @@ class GeminiNanoClient {
 
     this.isInitializing = true;
     try {
-      const systemPrompt = `You are AdSniper AI, an on-device Chrome extension assistant.
-You help users inspect network traffic, eliminate annoying ads/trackers, remove paywalls and popups, and control the page.
-
-You have access to the following MCP Actions:
-- tool_add_block_rule(pattern, reason): Adds a DeclarativeNetRequest block rule (e.g. pattern="||tracker.example.com").
-- tool_remove_overlay(): Removes anti-adblock modals, blur filters, and restores page scrolling.
-- tool_hide_element_css(selector, reason): Hides elements matching a CSS selector (display: none !important).
-- tool_extract_clean_content(): Extracts clean readable text of the page without ads/sidebars.
-- tool_inspect_requests(category): Audits recent network requests captured on the tab.
-- tool_toggle_feature(feature, state): Toggles 'mass_block', 'new_tab_block', 'dom_cleanup', or 'iframe_blocker'.
-
-When an action is appropriate, provide a concise explanation (1-2 sentences), followed immediately by an action block formatted exactly as:
-\`\`\`action
-{"tool": "tool_name", "args": {"arg1": "value"}}
-\`\`\`
-If no action is needed, just answer concisely.`;
+      const systemPrompt = await this.getSystemPrompt();
 
       const createOptions = {
         systemPrompt,
@@ -148,7 +207,19 @@ If no action is needed, just answer concisely.`;
         };
       }
 
-      this.session = await lm.create(createOptions);
+      // Try creating session with options, fall back gracefully if specific options are unsupported
+      try {
+        this.session = await lm.create(createOptions);
+      } catch (optErr) {
+        console.warn('[AdSniper AI] lm.create with options failed, trying systemPrompt only:', optErr);
+        try {
+          this.session = await lm.create({ systemPrompt });
+        } catch (promptErr) {
+          console.warn('[AdSniper AI] lm.create with systemPrompt failed, trying bare create:', promptErr);
+          this.session = await lm.create();
+        }
+      }
+
       this.availabilityStatus = 'ready';
       this.statusMessage = 'Gemini Nano Ready (On-device)';
       return this.session;
@@ -224,12 +295,14 @@ If no action is needed, just answer concisely.`;
       };
     }
 
-    // 5. Audit trackers
+    // 5. Audit trackers (only trigger on intentional commands, not general questions or link queries)
     if (
-      /(audit|inspect|check|scan).*?(tracker|request|telemetry|network|ad\s*call)/i.test(lower) ||
-      lower.includes('audit') ||
-      lower.includes('tracker') ||
-      lower.includes('telemetry')
+      /\b(audit|inspect)\s+(trackers?|telemetry|network|requests?|calls?|traffic)/i.test(lower) ||
+      /\b(scan|check)\s+(trackers?|telemetry|ad\s*network|ad\s*calls?)/i.test(lower) ||
+      lower === 'audit trackers' ||
+      lower === 'inspect requests' ||
+      lower === 'audit network requests' ||
+      lower === 'audit'
     ) {
       return {
         tool: 'tool_inspect_requests',
@@ -610,21 +683,7 @@ If no action is needed, just answer concisely.`;
           contextSnippet += `AdSniper Executed Action: ${preExecutedAction.message}\n`;
         }
 
-        const systemDirective = `[YOU ARE ADSNIPER, AN ACTIVE IN-BROWSER EXTENSION RUNNING ON THIS TAB]
-You have direct browser automation tools to protect this tab.
-NEVER tell the user to install other extensions (e.g. uBlock Origin, AdBlock).
-If the user asks to block ads, kill popups, or stop new tabs, you MUST execute an action:
-\`\`\`action
-{"tool": "tool_name", "args": {...}}
-\`\`\`
-Available tools:
-- tool_remove_overlay: clears popups, overlays, sticky video modals, paywalls, and restores scrolling.
-- tool_toggle_feature: { "feature": "new_tab_block" } to block new-tab popup ads/clicks, or "mass_block" for all ad patterns.
-- tool_add_block_rule: { "pattern": "||domain.com" } to block a network ad domain.
-- tool_hide_element_css: { "selector": "..." } to hide DOM elements.
-- tool_extract_clean_content: extracts clean reader text.
-- tool_inspect_requests: audits recent network calls.`;
-
+        const systemDirective = await this.getSystemPrompt();
         const fullPrompt = `${systemDirective}\n\n${contextSnippet}\nUser Request: ${trimmed}`;
 
         let fullResponse = '';
@@ -672,9 +731,10 @@ Available tools:
           return { reply: actionResult.report, actionExecuted: actionResult };
         }
 
-        // If no action was executed yet, run fallback intent resolution
+        // If no action was executed yet, ONLY check if the user's original trimmed input was an explicit command
+        // (Do NOT evaluate fullResponse as model words mentioning 'tracker' or 'audit' should not hijack the reply)
         if (!actionResult) {
-          const fallbackIntent = this.detectDirectIntent(fullResponse) || this.detectDirectIntent(trimmed);
+          const fallbackIntent = this.detectDirectIntent(trimmed);
           if (fallbackIntent) {
             actionResult = await this.executeMcpAction(fallbackIntent.tool, fallbackIntent.args, context);
             if (actionResult.tool === 'tool_inspect_requests' && actionResult.report) {

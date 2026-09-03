@@ -150,6 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Wire AI assistant toggle + restore state
   await initAIAssistant();
+  await initAISettings();
   document.getElementById('ai-toggle-btn').addEventListener('click', toggleAIAssistant);
   document.getElementById('ai-send-btn').addEventListener('click', () => handleAISend());
   document.getElementById('ai-prompt-input').addEventListener('keydown', (e) => {
@@ -771,12 +772,92 @@ async function toggleAIAssistant() {
   } else {
     btn.classList.remove('active');
     section.style.display = 'none';
+    const panel = document.getElementById('ai-settings-panel');
+    const settingsBtn = document.getElementById('ai-settings-btn');
+    if (panel) panel.style.display = 'none';
+    if (settingsBtn) settingsBtn.classList.remove('active');
     // Auto-expand Requests and Blocked Rules back to default view
     setSectionCollapsed('requests', false);
     setSectionCollapsed('rules', false);
     if (window.GeminiNanoClient) {
       window.GeminiNanoClient.getInstance().destroy();
     }
+  }
+}
+
+/**
+ * Initializes the AI System Prompt settings panel and controls.
+ */
+async function initAISettings() {
+  const settingsBtn = document.getElementById('ai-settings-btn');
+  const panel = document.getElementById('ai-settings-panel');
+  const closeBtn = document.getElementById('ai-settings-close');
+  const saveBtn = document.getElementById('ai-settings-save');
+  const resetBtn = document.getElementById('ai-settings-reset');
+  const textarea = document.getElementById('ai-system-prompt-input');
+  const statusSpan = document.getElementById('ai-settings-status');
+
+  if (!settingsBtn || !panel || !textarea) return;
+
+  async function loadPromptIntoTextarea() {
+    if (window.GeminiNanoClient) {
+      const client = window.GeminiNanoClient.getInstance();
+      textarea.value = await client.getSystemPrompt();
+    }
+  }
+
+  // Toggle settings panel
+  settingsBtn.addEventListener('click', async () => {
+    const isVisible = panel.style.display !== 'none';
+    if (isVisible) {
+      panel.style.display = 'none';
+      settingsBtn.classList.remove('active');
+    } else {
+      await loadPromptIntoTextarea();
+      panel.style.display = 'flex';
+      settingsBtn.classList.add('active');
+      textarea.focus();
+    }
+  });
+
+  // Close button
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.style.display = 'none';
+      settingsBtn.classList.remove('active');
+    });
+  }
+
+  // Save button
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async () => {
+      const newPrompt = textarea.value.trim();
+      await chrome.storage.local.set({ customSystemPrompt: newPrompt });
+      if (window.GeminiNanoClient) {
+        window.GeminiNanoClient.getInstance().destroy();
+      }
+      if (statusSpan) {
+        statusSpan.textContent = '✓ Saved & Applied';
+        statusSpan.style.color = '#22c55e';
+        setTimeout(() => { statusSpan.textContent = ''; }, 2500);
+      }
+    });
+  }
+
+  // Reset to default button
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      await chrome.storage.local.remove('customSystemPrompt');
+      if (window.GeminiNanoClient) {
+        textarea.value = window.GeminiNanoClient.DEFAULT_SYSTEM_PROMPT;
+        window.GeminiNanoClient.getInstance().destroy();
+      }
+      if (statusSpan) {
+        statusSpan.textContent = '✓ Reset to Default';
+        statusSpan.style.color = '#38bdf8';
+        setTimeout(() => { statusSpan.textContent = ''; }, 2500);
+      }
+    });
   }
 }
 

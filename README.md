@@ -107,48 +107,67 @@ AdSniper leverages Google's **Gemini Nano** via Chrome's native **Prompt API**. 
 Open a new tab in Chrome and configure the following flags:
 
 1. **Enable the Prompt API**:
-   - Paste in your address bar:
+   - In modern Chrome builds (Chrome 131+), the flag is named **`#prompt-api`**:
      ```text
-     chrome://flags/#prompt-api-for-gemini-nano
+     chrome://flags/#prompt-api
      ```
+   - *(In earlier Chrome 128–130 builds, it was named `chrome://flags/#prompt-api-for-gemini-nano`)*
    - Set the dropdown to **Enabled** (or **Enabled on user gesture**).
 
-2. **Bypass Hardware Restrictions (Recommended)**:
-   - Paste in your address bar:
+2. **Bypass Hardware Restrictions (If Available)**:
+   - Search for:
      ```text
      chrome://flags/#optimization-guide-on-device-model
      ```
-   - Set the dropdown to **Enabled BypassPerfRequirement** (this ensures Chrome downloads Gemini Nano even if your device isn't on Google's strict GPU whitelist).
+   - If present in your build, set the dropdown to **Enabled BypassPerfRequirement** (this ensures Chrome downloads Gemini Nano even if your device isn't on Google's strict GPU whitelist).
 
-3. **Relaunch Browser**:
-   - Click the **Relaunch** button at the bottom of the `chrome://flags` page to apply the settings.
+3. **Relaunch Chrome (CRITICAL)**:
+   - Click the **Relaunch** button at the bottom of `chrome://flags` (or close all Chrome windows and reopen).
+   - > [!IMPORTANT]
+   - > If Chrome shows *"Nearly up to date! Relaunch Chrome to finish updating"*, you **must** relaunch Chrome for the browser update and the enabled flags to take effect. Until relaunched, `window.ai` will remain `undefined`.
 
-### 3. Download the Gemini Nano Model Component
-After relaunching, Chrome needs to download the model files to your machine:
+### 3. Verify & Download the Gemini Nano Model
+After relaunching, you can monitor and trigger the model download in two ways:
 
+#### Option A: Dedicated AI Dashboard (Best & Easiest)
+1. Navigate to:
+   ```text
+   chrome://on-device-internals
+   ```
+2. Check the **Model Status** and **Device Status**:
+   - If the model is not installed or has an update, you can monitor download status, hardware capability, and file paths directly.
+
+#### Option B: Chrome Components
 1. Navigate to:
    ```text
    chrome://components/
    ```
-2. Press `Ctrl + F` and search for:
+2. Search for:
    ```text
    Optimization Guide On Device Model
    ```
 3. Click **Check for update**.
-   - If the status displays `Component not downloaded` or `New`, Chrome will begin downloading the model.
-   - Wait until the version changes to a non-zero number (e.g., `2024.x.x.x`) and status shows **Up-to-date**.
+   - Wait until the version changes to a non-zero number (e.g., `2024.x.x.x` or `2025.x.x.x`) and status shows **Up-to-date**.
 
-### 4. Verify Model Availability in DevTools
-You can test that the model is ready directly in the DevTools console:
-1. Open DevTools (`F12` or `Ctrl + Shift + I`) on any webpage.
-2. Switch to the **Console** tab and run:
+### 4. Verify Model Availability in DevTools Console
+In modern Chrome, the Prompt API is exposed via the standard **`LanguageModel`** interface (replacing the legacy `window.ai` namespace) and is scoped to Extension contexts:
+
+1. **Open the Extension Console**:
+   - Click the **AdSniper** puzzle piece icon in your toolbar to open the popup.
+   - **Right-click** inside the popup and select **Inspect** (or "Inspect popup").
+   - *(Note: Running in a standard web tab console may return undefined because Chrome isolates on-device AI from untrusted public websites).*
+2. In the DevTools **Console**, test the global interface:
    ```javascript
-   await window.ai.languageModel.availability();
+   await (window.LanguageModel || window.ai?.languageModel).availability();
+   ```
+   *Or directly:*
+   ```javascript
+   await LanguageModel.availability();
    ```
 3. **Interpreting Results**:
    - `'readily'`: Gemini Nano is fully downloaded, loaded in VRAM, and ready for instant use!
-   - `'after-download'`: Flags are enabled, but the model is still downloading. Run `await window.ai.languageModel.create();` in the console to trigger download progression.
-   - `'no'`: System hardware does not meet requirements, or `BypassPerfRequirement` flag was not set.
+   - `'after-download'` / `'downloadable'`: Flags are active, but model download is pending. Run `await LanguageModel.create();` to trigger download.
+   - `'unavailable'` / `'no'`: System hardware does not meet requirements, or `BypassPerfRequirement` was omitted.
 
 ### 5. Using AI Assistant in AdSniper
 1. Click the **AdSniper** extension icon in your toolbar.
