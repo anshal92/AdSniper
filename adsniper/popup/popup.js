@@ -74,6 +74,11 @@ async function sendToTab(message) {
   }
 }
 
+// Global exports for MCP client
+window.sendToTab = sendToTab;
+window.toggleNewTabBlock = toggleNewTabBlock;
+window.toggleMassBlock = toggleMassBlock;
+
 // ─────────────────────────────────────────────
 // Entry point
 // ─────────────────────────────────────────────
@@ -103,10 +108,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Wire clear button
-  document.getElementById('clear-btn').addEventListener('click', async () => {
+  document.getElementById('clear-btn').addEventListener('click', async (e) => {
+    e.stopPropagation();
     await chrome.storage.local.remove(`requests_${activeTabId}`);
     allRequests = [];
     renderRequests([]);
+  });
+
+  // Wire collapsible section headers for Requests and Blocked Rules
+  const reqCollapseBtn = document.getElementById('requests-collapse-btn');
+  if (reqCollapseBtn) {
+    reqCollapseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSectionCollapse('requests');
+    });
+  }
+  document.getElementById('requests-header').addEventListener('click', (e) => {
+    if (e.target.id !== 'clear-btn') {
+      toggleSectionCollapse('requests');
+    }
+  });
+
+  const rulesCollapseBtn = document.getElementById('rules-collapse-btn');
+  if (rulesCollapseBtn) {
+    rulesCollapseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSectionCollapse('rules');
+    });
+  }
+  document.getElementById('rules-header').addEventListener('click', () => {
+    toggleSectionCollapse('rules');
   });
 
   // Wire mass-block button + restore its visual state
@@ -116,6 +147,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Wire new-tab-block button + restore its visual state
   await updateNewTabBlockButton();
   document.getElementById('new-tab-block-btn').addEventListener('click', toggleNewTabBlock);
+
+  // Wire AI assistant toggle + restore state
+  await initAIAssistant();
+  document.getElementById('ai-toggle-btn').addEventListener('click', toggleAIAssistant);
+  document.getElementById('ai-send-btn').addEventListener('click', () => handleAISend());
+  document.getElementById('ai-prompt-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAISend();
+    }
+  });
+  document.querySelectorAll('.ai-chip').forEach((chip) => {
+    chip.addEventListener('click', () => handleAISend(chip.dataset.prompt));
+  });
+  document.querySelectorAll('.ai-hint-tag').forEach((tag) => {
+    tag.addEventListener('click', () => {
+      const prompt = tag.dataset.prompt;
+      const input = document.getElementById('ai-prompt-input');
+      if (input) input.value = prompt;
+      handleAISend(prompt);
+    });
+  });
 
   // Wire DOM cleanup toggle + Clean Page button
   await initDomCleanupToggle();
@@ -146,6 +199,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 window.addEventListener('unload', () => {
   if (refreshTimer) clearInterval(refreshTimer);
+  if (window.GeminiNanoClient) {
+    window.GeminiNanoClient.getInstance().destroy();
+  }
 });
 
 // ─────────────────────────────────────────────
@@ -632,6 +688,234 @@ async function updateNewTabBlockButton() {
   } else {
     btn.classList.remove('active');
     btn.title = 'Click to block ads from opening new tabs';
+  }
+}
+
+// ─────────────────────────────────────────────
+// GEMINI NANO AI ASSISTANT & MCP ACTIONS
+// ─────────────────────────────────────────────
+
+async function initAIAssistant() {
+  const { aiEnabled = false } = await chrome.storage.local.get('aiEnabled');
+  const btn = document.getElementById('ai-toggle-btn');
+  const section = document.getElementById('ai-prompt-section');
+
+  if (aiEnabled) {
+    btn.classList.add('active');
+    section.style.display = 'flex';
+    checkAndDisplayAIStatus();
+    // Collapse Requests and Blocked Rules when AI mode is active
+    setSectionCollapsed('requests', true);
+    setSectionCollapsed('rules', true);
+  } else {
+    btn.classList.remove('active');
+    section.style.display = 'none';
+    setSectionCollapsed('requests', false);
+    setSectionCollapsed('rules', false);
+  }
+}
+
+async function checkAndDisplayAIStatus() {
+  const pill = document.getElementById('ai-status-pill');
+  const statusText = document.getElementById('ai-status-text');
+  if (!pill || !window.GeminiNanoClient) return;
+
+  // Yellow pulsing light during startup
+  pill.className = 'ai-status-pill startup';
+  if (statusText) statusText.textContent = 'Starting up…';
+
+  const client = window.GeminiNanoClient.getInstance();
+  const info = await client.checkAvailability();
+
+  pill.className = 'ai-status-pill';
+  if (info.status === 'ready') {
+    // Green blinking light when ready & running
+    pill.classList.add('running');
+    if (statusText) statusText.textContent = 'Nano Ready';
+    pill.title = 'Gemini Nano is available and running 100% on-device.';
+  } else if (info.status === 'downloading') {
+    // Yellow pulsing light for downloading / startup
+    pill.classList.add('startup');
+    if (statusText) statusText.textContent = `Downloading ${info.progress ? info.progress + '%' : '…'}`;
+    pill.title = info.message || 'Downloading model via Chrome components';
+  } else if (info.status === 'down' || info.status === 'error') {
+    // Red for down
+    pill.classList.add('down');
+    if (statusText) statusText.textContent = 'AI Down';
+    pill.title = info.message || 'On-device AI engine is offline';
+  } else {
+    // Green blinking light for Heuristics Mode (available and running)
+    pill.classList.add('running');
+    if (statusText) statusText.textContent = 'Heuristics Mode';
+    pill.title = 'Heuristics Mode is available and running on-device with MCP actions.';
+  }
+}
+
+async function toggleAIAssistant() {
+  const { aiEnabled = false } = await chrome.storage.local.get('aiEnabled');
+  const next = !aiEnabled;
+  await chrome.storage.local.set({ aiEnabled: next });
+
+  const btn = document.getElementById('ai-toggle-btn');
+  const section = document.getElementById('ai-prompt-section');
+  const input = document.getElementById('ai-prompt-input');
+
+  if (next) {
+    btn.classList.add('active');
+    section.style.display = 'flex';
+    if (input) input.focus();
+    await checkAndDisplayAIStatus();
+    // Auto-collapse Requests and Blocked Rules with option to expand
+    setSectionCollapsed('requests', true);
+    setSectionCollapsed('rules', true);
+  } else {
+    btn.classList.remove('active');
+    section.style.display = 'none';
+    // Auto-expand Requests and Blocked Rules back to default view
+    setSectionCollapsed('requests', false);
+    setSectionCollapsed('rules', false);
+    if (window.GeminiNanoClient) {
+      window.GeminiNanoClient.getInstance().destroy();
+    }
+  }
+}
+
+/**
+ * Collapses or expands a section ('requests' or 'rules')
+ */
+function setSectionCollapsed(section, isCollapsed) {
+  const list = document.getElementById(`${section}-list`);
+  const btn = document.getElementById(`${section}-collapse-btn`);
+  if (!list) return;
+
+  if (isCollapsed) {
+    list.classList.add('collapsed');
+    if (btn) btn.textContent = '▸ Expand';
+  } else {
+    list.classList.remove('collapsed');
+    if (btn) btn.textContent = '▾ Collapse';
+  }
+}
+
+function toggleSectionCollapse(section) {
+  const list = document.getElementById(`${section}-list`);
+  if (!list) return;
+  const isCurrentlyCollapsed = list.classList.contains('collapsed');
+  setSectionCollapsed(section, !isCurrentlyCollapsed);
+}
+
+/**
+ * Formats AI text response into safe, styled HTML with bold, code, bullets, paragraphs.
+ */
+function formatAIOutput(text) {
+  if (!text) return '';
+
+  // Escape HTML entities to prevent XSS
+  const escapeHtml = (str) =>
+    str.replace(/&/g, '&amp;')
+       .replace(/</g, '&lt;')
+       .replace(/>/g, '&gt;')
+       .replace(/"/g, '&quot;')
+       .replace(/'/g, '&#039;');
+
+  let safe = escapeHtml(text);
+
+  // Pre-code blocks
+  safe = safe.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
+    return `<pre style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:10px;overflow-x:auto;"><code>${code.trim()}</code></pre>`;
+  });
+
+  // Inline code `code`
+  safe = safe.replace(/`([^`\n]+)`/g, '<code class="ai-inline-code">$1</code>');
+
+  // Bold **bold**
+  safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Italics *italic*
+  safe = safe.replace(/(^|[^\*])\*([^\*\n]+)\*([^\*]|$)/g, '$1<em>$2</em>$3');
+
+  // Headings
+  safe = safe.replace(/^###?\s+(.+)$/gm, '<div class="ai-heading">$1</div>');
+
+  // Bullet items
+  safe = safe.replace(/^[•\-\*]\s+(.+)$/gm, '<li class="ai-bullet-item">$1</li>');
+  safe = safe.replace(/(<li class="ai-bullet-item">[\s\S]*?<\/li>)/g, '<ul class="ai-list">$1</ul>');
+  safe = safe.replace(/<\/ul>\s*<ul class="ai-list">/g, '');
+
+  // Paragraphs
+  const parts = safe.split(/\n\n+/);
+  safe = parts.map((p) => {
+    const trimmed = p.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('<div') || trimmed.startsWith('<ul') || trimmed.startsWith('<pre')) {
+      return trimmed;
+    }
+    return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+
+  return safe;
+}
+
+async function handleAISend(overridePrompt) {
+  const input = document.getElementById('ai-prompt-input');
+  const sendBtn = document.getElementById('ai-send-btn');
+  const responseBox = document.getElementById('ai-response-box');
+  const responseText = document.getElementById('ai-response-text');
+  const actionCard = document.getElementById('ai-action-card');
+
+  const prompt = (overridePrompt || (input ? input.value : '') || '').trim();
+  if (!prompt) return;
+
+  if (input) input.value = '';
+  sendBtn.disabled = true;
+  actionCard.style.display = 'none';
+  responseText.innerHTML = '<p style="color:var(--accent);"><em>Thinking with on-device AI…</em></p>';
+
+  try {
+    const client = window.GeminiNanoClient.getInstance();
+    const context = {
+      activeTabId,
+      activeTabUrl,
+      recentRequests: allRequests,
+    };
+
+    const result = await client.processPrompt(prompt, context, (tokenChunk) => {
+      // Live streaming update with formatting
+      responseText.innerHTML = formatAIOutput(tokenChunk);
+      responseBox.scrollTop = responseBox.scrollHeight;
+    });
+
+    responseText.innerHTML = formatAIOutput(result.reply || 'Action executed.');
+    responseBox.scrollTop = responseBox.scrollHeight;
+
+    if (result.actionExecuted && result.actionExecuted.success) {
+      actionCard.style.display = 'flex';
+      const action = result.actionExecuted;
+      const cardText = `⚡ ${action.message || 'Action executed'}`;
+
+      actionCard.innerHTML = `<span>${cardText}</span>`;
+
+      // If a rule was added or feature toggled, sync UI and refresh
+      if (action.tool === 'tool_add_block_rule') {
+        await syncBadge();
+        await refreshAdBlocker();
+      } else if (action.tool === 'tool_toggle_feature') {
+        if (action.feature === 'new_tab_block') {
+          await updateNewTabBlockButton();
+          await syncBadge();
+          await refreshAdBlocker();
+        } else if (action.feature === 'mass_block') {
+          await updateMassBlockButton();
+          await syncBadge();
+          await refreshAdBlocker();
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[AdSniper AI] Error processing request:', err);
+    responseText.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
+  } finally {
+    sendBtn.disabled = false;
   }
 }
 

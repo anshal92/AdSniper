@@ -487,10 +487,14 @@ window.AdSniperGame = (() => {
       const script = document.createElement('script');
       script.textContent = `
         (() => {
-          if (window.__adsniper_orig_open) {
-            window.open = window.__adsniper_orig_open;
-            delete window.__adsniper_orig_open;
-          }
+          try {
+            if (window.__adsniper_orig_open) {
+              window.open = window.__adsniper_orig_open;
+              try { if (window.top) window.top.open = window.__adsniper_orig_open; } catch (e) {}
+              try { if (window.parent) window.parent.open = window.__adsniper_orig_open; } catch (e) {}
+              delete window.__adsniper_orig_open;
+            }
+          } catch (e) {}
         })();
       `;
       (document.head || document.documentElement).appendChild(script);
@@ -499,6 +503,7 @@ window.AdSniperGame = (() => {
   }
 
   function onGlobalClickPreventNewTab(e) {
+    if (gameState !== 'PLAYING' && gameState !== 'LOADING') return;
     const link = e.target && e.target.closest && e.target.closest('a[target="_blank"], a[target="_new"], a[href^="http"]');
     if (link) {
       if (link.target === '_blank' || link.target === '_new' || link.closest('[data-shb], [data-area], .D1BnW, #a1rmqtdyf')) {
@@ -1727,8 +1732,15 @@ window.AdSniperGame = (() => {
   /**
    * Ends the game — cleans up canvas, restores blocking state.
    */
-  function endGame() {
-    gameState = null;
+  async function endGame() {
+    gameState = 'ENDED';
+
+    // 1. Immediately clear game tab ID directly so new tabs in Chrome are never killed
+    try {
+      await chrome.storage.local.remove(['snipingActiveTabId', 'snipingGamePending']);
+    } catch (e) {
+      console.warn('[AdSniper Game] Direct storage cleanup error:', e);
+    }
 
     // Remove anti-overlay styles
     removeAntiOverlayStyles();
@@ -1770,15 +1782,13 @@ window.AdSniperGame = (() => {
     // Reset cursor
     document.body.style.cursor = '';
 
-    // Tell SW to restore pre-game blocking state
+    // Tell SW to unhook gaming tab and restore pre-game blocking state
     try {
+      chrome.runtime.sendMessage({ type: 'SNIPING_GAME_ENDED' });
       chrome.runtime.sendMessage({ type: 'RESTORE_SNIPING_STATE' });
     } catch (err) {
       console.warn('[AdSniper Game] Failed to restore state:', err.message);
     }
-
-    // Clean up game pending flag
-    chrome.storage.local.set({ snipingGamePending: false });
 
     // Clear references
     birds = [];
@@ -1786,6 +1796,16 @@ window.AdSniperGame = (() => {
     fireworks = [];
     loadingPurgedAds = [];
     quitButtonBounds = { x: 0, y: 0, w: 0, h: 0 };
+
+    // If this game was launched in a dedicated new tab, close this tab on quit
+    try {
+      const { snipingOpenNewTab = false } = await chrome.storage.local.get('snipingOpenNewTab');
+      if (snipingOpenNewTab) {
+        await chrome.storage.local.remove('snipingOpenNewTab');
+        chrome.runtime.sendMessage({ type: 'CLOSE_CURRENT_TAB' });
+        try { window.close(); } catch (e) {}
+      }
+    } catch (e) { /* ignore */ }
   }
 
   // Public API

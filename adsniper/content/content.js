@@ -118,6 +118,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: true });
       break;
     }
+
+    case 'AI_REMOVE_OVERLAY': {
+      const removed = removeIntrusiveOverlays();
+      sendResponse({ ok: true, removed });
+      break;
+    }
+
+    case 'AI_HIDE_SELECTOR': {
+      const count = hideBySelector(message.selector);
+      sendResponse({ ok: true, count });
+      break;
+    }
+
+    case 'AI_EXTRACT_CONTENT': {
+      const result = extractCleanArticleText();
+      sendResponse({ ok: true, ...result });
+      break;
+    }
   }
 
   return true; // Keep async message channel open
@@ -631,4 +649,80 @@ function launchSnipingGame(retriesRemaining) {
     console.error('[AdSniper] Game engine failed to initialize');
     chrome.storage.local.set({ snipingGamePending: false });
   }
+}
+
+// ─────────────────────────────────────────────────────────
+// AI HELPER FUNCTIONS (Overlay removal, CSS hiding, Content Extraction)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Detects and removes blocking anti-adblock modals, paywalls, and restores scrolling.
+ */
+function removeIntrusiveOverlays() {
+  let removed = 0;
+  const overlayKeywords = /adblock|paywall|subscribe|subscription|whitelist|membership|disable.*ad|turn.*off.*ad|popup|modal|backdrop|promo|banner|float.*ad|sticky.*ad|video.*ad|advertisement|sponsor/i;
+
+  const candidates = document.querySelectorAll('div, section, aside, dialog');
+  candidates.forEach((el) => {
+    try {
+      const style = window.getComputedStyle(el);
+      const isFixed = style.position === 'fixed' || style.position === 'sticky';
+      const zIndex = parseInt(style.zIndex, 10);
+      const isHighZ = !isNaN(zIndex) && zIndex >= 200;
+
+      if (isFixed && (isHighZ || style.backdropFilter !== 'none')) {
+        const text = el.innerText || '';
+        const hasOverlayText = overlayKeywords.test(text) || overlayKeywords.test(el.className) || overlayKeywords.test(el.id);
+        const coversScreen = el.offsetWidth > window.innerWidth * 0.5 && el.offsetHeight > window.innerHeight * 0.5;
+        const hasFloatingVideo = !!(el.querySelector('video') || el.querySelector('iframe'));
+
+        if (hasOverlayText || (coversScreen && isHighZ && style.opacity > 0.3) || (isFixed && hasFloatingVideo && isHighZ)) {
+          el.remove();
+          removed++;
+        }
+      }
+    } catch { /* ignore detached/shadow nodes */ }
+  });
+
+  // Restore page scrolling if locked by modal
+  try {
+    document.body.style.setProperty('overflow', 'auto', 'important');
+    document.documentElement.style.setProperty('overflow', 'auto', 'important');
+    document.body.style.filter = 'none';
+    document.documentElement.style.filter = 'none';
+  } catch {}
+
+  return removed;
+}
+
+/**
+ * Hides elements matching a given CSS selector.
+ */
+function hideBySelector(selector) {
+  if (!selector) return 0;
+  let count = 0;
+  try {
+    const els = document.querySelectorAll(selector);
+    els.forEach((el) => {
+      if (applyHide(el)) count++;
+    });
+  } catch (err) {
+    console.warn('[AdSniper AI] Invalid selector:', selector, err);
+  }
+  return count;
+}
+
+/**
+ * Extracts clean readable text from main article/body.
+ */
+function extractCleanArticleText() {
+  const container = document.querySelector('article') || document.querySelector('main') || document.querySelector('[role="main"]') || document.body;
+  if (!container) return { text: '', wordCount: 0 };
+
+  const clone = container.cloneNode(true);
+  clone.querySelectorAll('script, style, noscript, nav, header, footer, aside, iframe, [aria-hidden="true"]').forEach((n) => n.remove());
+
+  const text = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
+  const words = text ? text.split(/\s+/).length : 0;
+  return { text: text.slice(0, 4000), wordCount: words };
 }

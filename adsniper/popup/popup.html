@@ -253,6 +253,35 @@
     }
     .btn-link:hover { color: var(--text); }
 
+    .collapsible-header {
+      cursor: pointer;
+      user-select: none;
+      transition: background .15s;
+    }
+    .collapsible-header:hover {
+      background: var(--surface2);
+    }
+    .collapse-btn {
+      background: rgba(255,255,255,.07);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all .15s;
+      flex-shrink: 0;
+    }
+    .collapse-btn:hover {
+      background: rgba(124,106,255,.2);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .list-container.collapsed {
+      display: none !important;
+    }
+
     /* ═══════════════════════════════════════
        LIST CONTAINERS
     ═══════════════════════════════════════ */
@@ -722,6 +751,366 @@
       animation: dot-blink 1.2s step-end infinite;
     }
 
+    /* AI Toggle Button (beside new-tab-block) */
+    .btn-ai-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      background: rgba(124,106,255,.15);
+      color: #c4b5fd;
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .3px;
+      cursor: pointer;
+      transition: all .2s;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .btn-ai-toggle:hover { background: rgba(124,106,255,.25); }
+    .btn-ai-toggle.active {
+      background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      color: #fff;
+      border-color: #a78bfa;
+      box-shadow: 0 0 0 3px rgba(124,106,255,.35);
+    }
+    .btn-ai-toggle .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.5);
+      flex-shrink: 0;
+    }
+    .btn-ai-toggle.active .dot {
+      background: #a7f3d0;
+      animation: dot-blink 1.2s step-end infinite;
+    }
+
+    /* AI Prompt Section */
+    .ai-prompt-section {
+      padding: 10px 14px;
+      background: #141420;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      animation: fadeIn .2s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .ai-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .ai-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .ai-status-pill {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 99px;
+      background: rgba(255,255,255,.07);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      user-select: none;
+      transition: all .2s;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    /* Green blinking light for available and running (Heuristics Mode & Nano Ready) */
+    .ai-status-pill.running {
+      background: rgba(34,197,94,.12);
+      color: #4ade80;
+      border-color: rgba(34,197,94,.35);
+    }
+    .ai-status-pill.running .status-dot {
+      background: #22c55e;
+      box-shadow: 0 0 6px rgba(34,197,94,.8);
+      animation: blink-green 1.2s infinite ease-in-out;
+    }
+    @keyframes blink-green {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+        box-shadow: 0 0 7px rgba(34,197,94,.9);
+      }
+      50% {
+        opacity: 0.25;
+        transform: scale(0.8);
+        box-shadow: 0 0 2px rgba(34,197,94,.2);
+      }
+    }
+
+    /* Yellow pulsing for startup / downloading */
+    .ai-status-pill.startup {
+      background: rgba(245,158,11,.12);
+      color: #fbbf24;
+      border-color: rgba(245,158,11,.35);
+    }
+    .ai-status-pill.startup .status-dot {
+      background: #f59e0b;
+      box-shadow: 0 0 5px rgba(245,158,11,.8);
+      animation: pulse-yellow 1s infinite ease-in-out;
+    }
+    @keyframes pulse-yellow {
+      0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+        box-shadow: 0 0 6px rgba(245,158,11,.8);
+      }
+      50% {
+        opacity: 0.35;
+        transform: scale(0.85);
+        box-shadow: 0 0 2px rgba(245,158,11,.2);
+      }
+    }
+
+    /* Red for down / offline / error */
+    .ai-status-pill.down {
+      background: rgba(239,68,68,.12);
+      color: #f87171;
+      border-color: rgba(239,68,68,.35);
+    }
+    .ai-status-pill.down .status-dot {
+      background: #ef4444;
+      box-shadow: 0 0 5px rgba(239,68,68,.8);
+    }
+
+    /* Input with floating send button inside */
+    .ai-input-wrapper {
+      position: relative;
+      display: flex;
+      width: 100%;
+    }
+    .ai-prompt-input {
+      width: 100%;
+      height: 48px;
+      min-height: 48px;
+      max-height: 72px;
+      resize: none;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 7px 38px 7px 10px;
+      line-height: 1.4;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .ai-prompt-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(124,106,255,.2);
+    }
+    .btn-ai-send {
+      position: absolute;
+      right: 7px;
+      bottom: 7px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform .15s, background .15s;
+      padding: 0;
+    }
+    .btn-ai-send:hover {
+      background: #6d58ff;
+      transform: scale(1.06);
+    }
+    .btn-ai-send:active { transform: scale(0.94); }
+    .btn-ai-send:disabled {
+      background: var(--border);
+      color: var(--muted);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Prompt Hints Panel */
+    .ai-hints-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: rgba(255,255,255,.02);
+      border: 1px solid rgba(255,255,255,.06);
+      border-radius: var(--radius);
+      padding: 5px 8px;
+    }
+    .ai-hints-title {
+      font-size: 9.5px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .ai-hints-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .ai-hint-tag {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: #cbd5e1;
+      font-size: 10px;
+      padding: 2px 6px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .ai-hint-tag:hover {
+      border-color: var(--accent);
+      color: #fff;
+      background: rgba(124,106,255,.15);
+    }
+
+    /* Quick action chips */
+    .ai-quick-chips {
+      display: flex;
+      gap: 5px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .ai-quick-chips::-webkit-scrollbar { display: none; }
+    .ai-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      color: var(--text);
+      font-size: 10px;
+      padding: 2px 8px;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+      flex-shrink: 0;
+    }
+    .ai-chip:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(124,106,255,.05);
+    }
+
+    /* Fixed & Formatted Output Box */
+    .ai-response-box {
+      height: 185px;
+      min-height: 185px;
+      max-height: 185px;
+      overflow-y: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 11px;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .ai-response-box::-webkit-scrollbar { width: 4px; }
+    .ai-response-box::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 99px;
+    }
+    .ai-response-text {
+      color: var(--text);
+      word-break: break-word;
+      font-size: 11px;
+    }
+    .ai-response-text p {
+      margin-bottom: 6px;
+    }
+    .ai-response-text strong {
+      color: #f1f1fc;
+      font-weight: 700;
+    }
+    .ai-response-text em {
+      color: #c4b5fd;
+    }
+    .ai-response-text code.ai-inline-code {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: #f43f5e;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      font-size: 10px;
+    }
+    .ai-response-text ul.ai-list, .ai-response-text ol.ai-num-list {
+      margin-left: 16px;
+      margin-bottom: 6px;
+    }
+    .ai-response-text li {
+      margin-bottom: 3px;
+    }
+    .ai-response-text .ai-heading {
+      font-weight: 700;
+      color: var(--accent);
+      margin: 6px 0 3px 0;
+      font-size: 11.5px;
+    }
+    .ai-action-card {
+      background: rgba(34,197,94,.1);
+      border: 1px solid rgba(34,197,94,.3);
+      border-radius: 5px;
+      padding: 6px 10px;
+      font-size: 10.5px;
+      color: var(--green);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    /* Welcome / Idle Guide inside output */
+    .ai-welcome-guide {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .ai-welcome-header {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 11.5px;
+      margin-bottom: 4px;
+    }
+    .ai-welcome-guide ul {
+      margin: 6px 0 6px 16px;
+      color: var(--text);
+    }
+    .ai-welcome-guide li {
+      margin-bottom: 3px;
+    }
+    .ai-welcome-tip {
+      font-size: 10px;
+      color: var(--amber);
+      font-style: italic;
+      margin-top: 4px;
+    }
+
     /* ═══════════════════════════════════════
        FOOTER
     ═══════════════════════════════════════ */
@@ -781,9 +1170,71 @@
       <span class="dot"></span>
       Block New Tab Ads
     </button>
+    <button id="ai-toggle-btn" class="btn-ai-toggle" title="Toggle Gemini Nano on-device AI assistant">
+      <span class="dot"></span>
+      ✨ Enable AI
+    </button>
     <div class="mass-block-info">
       <div class="mass-block-title" id="mass-block-title">Block all known ad patterns</div>
       <div class="mass-block-sub"  id="mass-block-sub">Inactive — click to activate</div>
+    </div>
+  </div>
+
+  <!-- AI Prompt & MCP Section (Collapsible) -->
+  <div id="ai-prompt-section" class="ai-prompt-section" style="display: none;">
+    <div class="ai-header-row">
+      <span class="ai-title">🤖 Gemini Nano Assistant</span>
+      <span id="ai-status-pill" class="ai-status-pill startup" title="AI Status">
+        <span class="status-dot"></span>
+        <span id="ai-status-text">Starting up…</span>
+      </span>
+    </div>
+
+    <!-- Input container with floating send arrow inside -->
+    <div class="ai-input-wrapper">
+      <textarea id="ai-prompt-input" class="ai-prompt-input" placeholder="Ask AI to block ads, kill popups, audit requests… (Enter to send, Shift+Enter for new line)"></textarea>
+      <button id="ai-send-btn" class="btn-ai-send" title="Send request (Enter)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Hints panel showing examples of what is possible with prompt -->
+    <div class="ai-hints-panel">
+      <div class="ai-hints-title">💡 Prompt Examples (click to use):</div>
+      <div class="ai-hints-list">
+        <span class="ai-hint-tag" data-prompt="Block all tracking and telemetry requests on this page">🚫 Block all trackers</span>
+        <span class="ai-hint-tag" data-prompt="Remove anti-adblock modals, overlays, and restore scrolling">🧹 Remove overlays & paywalls</span>
+        <span class="ai-hint-tag" data-prompt="Hide floating videos and sticky promo banners on this page">👁️ Hide floating videos</span>
+        <span class="ai-hint-tag" data-prompt="Extract clean readable article text without ads">📖 Clean reader view</span>
+        <span class="ai-hint-tag" data-prompt="Audit all intercepted requests and highlight trackers">🔍 Audit network requests</span>
+      </div>
+    </div>
+
+    <!-- Quick action chips -->
+    <div class="ai-quick-chips">
+      <button class="ai-chip" data-prompt="Audit trackers and network calls on this page">🎯 Audit Trackers</button>
+      <button class="ai-chip" data-prompt="Remove anti-adblock overlays and paywalls on this page">🧹 Kill Overlays</button>
+      <button class="ai-chip" data-prompt="Extract clean readable article content without ads">📝 Reader View</button>
+    </div>
+
+    <!-- Fixed & Formatted response / action card container -->
+    <div id="ai-response-box" class="ai-response-box">
+      <div id="ai-response-text" class="ai-response-text">
+        <div class="ai-welcome-guide">
+          <div class="ai-welcome-header">✨ AdSniper Gemini Nano Assistant</div>
+          <p>Runs 100% on-device inside Chrome with zero cloud round-trips.</p>
+          <ul>
+            <li><strong>Smart Ad Blocking:</strong> Say <em>"Block all analytics on this tab"</em></li>
+            <li><strong>De-Clutter Page:</strong> Say <em>"Remove anti-adblock overlay"</em> or <em>"Hide sticky videos"</em></li>
+            <li><strong>Readability & Audit:</strong> Say <em>"Extract clean article"</em> or <em>"Audit trackers"</em></li>
+          </ul>
+          <div class="ai-welcome-tip">Type your prompt above or click an example hint to run.</div>
+        </div>
+      </div>
+      <div id="ai-action-card" class="ai-action-card" style="display: none;"></div>
     </div>
   </div>
 
@@ -810,21 +1261,23 @@
     <span id="iframe-stat" class="iframe-stat">0 removed</span>
   </div>
 
-  <!-- Requests section -->
-  <div class="section-header">
-    Requests
+  <!-- Requests section (Collapsible) -->
+  <div class="section-header collapsible-header" id="requests-header">
+    <span>Requests</span>
     <span id="req-count" class="count-pill">0</span>
     <span class="section-hint">current tab · newest first</span>
     <button id="clear-btn" class="btn-link">clear</button>
+    <button class="collapse-btn" id="requests-collapse-btn">▾ Collapse</button>
   </div>
   <div id="requests-list" class="list-container">
     <div class="empty">Navigate to a page to see requests.</div>
   </div>
 
-  <!-- Blocked rules section -->
-  <div class="section-header">
-    Blocked Rules
+  <!-- Blocked rules section (Collapsible) -->
+  <div class="section-header collapsible-header" id="rules-header">
+    <span>Blocked Rules</span>
     <span id="rules-count" class="count-pill">0</span>
+    <button class="collapse-btn" id="rules-collapse-btn" style="margin-left: auto;">▾ Collapse</button>
   </div>
   <div id="rules-list" class="list-container rules-container">
     <div class="empty">No rules active.</div>
@@ -848,6 +1301,7 @@
 
 <footer id="footer">Initializing…</footer>
 
+<script src="../ai/nano-client.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

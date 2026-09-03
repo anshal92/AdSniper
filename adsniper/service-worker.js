@@ -20,10 +20,10 @@ const AD_HOSTS_FETCH_URL =
 // ---------------------------------------------------------------------------
 // 1. webRequest logger — observe all URLs, store per tab
 // ---------------------------------------------------------------------------
-chrome.webRequest.onBeforeRequest.addListener(
-  async (details) => {
-    if (details.tabId < 0) return; // Ignore background/browser requests
+function handleBeforeRequest(details) {
+  if (details.tabId < 0) return; // Ignore background/browser requests
 
+  (async () => {
     const { monitoringEnabled = true } = await chrome.storage.local.get('monitoringEnabled');
     if (!monitoringEnabled) return;
 
@@ -31,18 +31,45 @@ chrome.webRequest.onBeforeRequest.addListener(
     const stored = await chrome.storage.local.get(key);
     const requests = stored[key] || [];
 
+    let postData = null;
+    if (details.requestBody) {
+      if (details.requestBody.formData) {
+        postData = details.requestBody.formData;
+      } else if (details.requestBody.raw && details.requestBody.raw.length > 0) {
+        try {
+          const dec = new TextDecoder('utf-8');
+          postData = dec.decode(details.requestBody.raw[0].bytes);
+          if (postData && postData.length > 300) postData = postData.slice(0, 300) + '…';
+        } catch (e) {}
+      }
+    }
+
     // Prepend newest first
     requests.unshift({
       url: details.url,
+      method: details.method || 'GET',
       type: details.type,
+      postData,
       timestamp: Date.now(),
     });
 
     if (requests.length > MAX_REQUESTS_PER_TAB) requests.length = MAX_REQUESTS_PER_TAB;
     await chrome.storage.local.set({ [key]: requests });
-  },
-  { urls: ['<all_urls>'] }
-);
+  })().catch(() => {});
+}
+
+try {
+  chrome.webRequest.onBeforeRequest.addListener(
+    handleBeforeRequest,
+    { urls: ['<all_urls>'] },
+    ['requestBody']
+  );
+} catch (e) {
+  chrome.webRequest.onBeforeRequest.addListener(
+    handleBeforeRequest,
+    { urls: ['<all_urls>'] }
+  );
+}
 
 // ---------------------------------------------------------------------------
 // 2. Cleanup — remove log when tab is closed
@@ -60,10 +87,26 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 // ---------------------------------------------------------------------------
 chrome.tabs.onCreated.addListener(async (newTab) => {
   if (!newTab.openerTabId) return;
+
+  const targetUrl = (newTab.url || newTab.pendingUrl || '').toLowerCase();
+
+  // NEVER close Chrome system pages, new-tab pages, empty tabs, or extension pages
+  if (
+    !targetUrl ||
+    targetUrl === 'about:blank' ||
+    targetUrl.startsWith('chrome://') ||
+    targetUrl.startsWith('chrome-extension://') ||
+    targetUrl.startsWith('edge://') ||
+    targetUrl.startsWith('brave://') ||
+    targetUrl.includes('newtab')
+  ) {
+    return;
+  }
+
   const { snipingActiveTabId } = await chrome.storage.local.get('snipingActiveTabId');
   if (snipingActiveTabId && newTab.openerTabId === snipingActiveTabId) {
     try {
-      console.log('[AdSniper] Closed unwanted popup tab opened by game tab:', newTab.id);
+      console.log('[AdSniper] Closed unwanted popup tab opened by game tab:', newTab.id, targetUrl);
       await chrome.tabs.remove(newTab.id);
     } catch { /* Tab may already be closed */ }
   }
@@ -173,23 +216,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  // ── Immediately unhook active sniping tab tracking ──
+  if (message.type === 'SNIPING_GAME_ENDED') {
+    (async () => {
+      try {
+        await chrome.storage.local.remove(['snipingActiveTabId', 'snipingGamePending']);
+        console.log('[AdSniper] Cleared active sniping tab state');
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // ── Close dedicated game tab when user clicks Quit Game ──
+  if (message.type === 'CLOSE_CURRENT_TAB') {
+    if (sender.tab && sender.tab.id) {
+      try {
+        chrome.tabs.remove(sender.tab.id);
+      } catch (e) { /* ignore */ }
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
   // ── Restore blocking state after sniping game ends ──
   if (message.type === 'RESTORE_SNIPING_STATE') {
     (async () => {
       try {
+        // Guarantee game tab active ID is cleared immediately
+        await chrome.storage.local.remove(['snipingActiveTabId', 'snipingGamePending']);
+
         const { snipingPreGameState = null } =
           await chrome.storage.local.get('snipingPreGameState');
 
         if (!snipingPreGameState) {
-          sendResponse({ ok: false, reason: 'no saved state' });
+          sendResponse({ ok: true, note: 'no pre-game state' });
           return;
         }
 
         // Restore DOM cleanup and iframe blocker flags
         await chrome.storage.local.set({
-          domCleanupEnabled: snipingPreGameState.domCleanupEnabled,
-          iframeBlockerEnabled: snipingPreGameState.iframeBlockerEnabled,
+          domCleanupEnabled: snipingPreGameState.domCleanupEnabled !== false,
+          iframeBlockerEnabled: snipingPreGameState.iframeBlockerEnabled === true,
         });
+
+        // Query all existing dynamic rules to safely avoid duplicate ID collisions
+        const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+        const existingMassBlockIds = existingRules
+          .filter((r) => r.id >= 50001)
+          .map((r) => r.id);
+        const existingNewTabIds = existingRules
+          .filter((r) => r.id >= 40001 && r.id < 50000)
+          .map((r) => r.id);
 
         // Re-enable mass-block DNR rules if they were active
         if (snipingPreGameState.massBlockActive) {
@@ -218,16 +298,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
           }
 
-          if (rules.length > 0) {
+          await chrome.declarativeNetRequest.updateDynamicRules({
+            addRules: rules,
+            removeRuleIds: existingMassBlockIds, // Remove any existing rules first to prevent duplicate ID crashes
+          });
+          await chrome.storage.local.set({
+            massBlockActive: true,
+            massBlockRuleIds: rules.map((r) => r.id),
+          });
+        } else {
+          if (existingMassBlockIds.length > 0) {
             await chrome.declarativeNetRequest.updateDynamicRules({
-              addRules: rules,
-              removeRuleIds: [],
-            });
-            await chrome.storage.local.set({
-              massBlockActive: true,
-              massBlockRuleIds: rules.map((r) => r.id),
+              addRules: [],
+              removeRuleIds: existingMassBlockIds,
             });
           }
+          await chrome.storage.local.set({
+            massBlockActive: false,
+            massBlockRuleIds: [],
+          });
         }
 
         // Re-enable new-tab-block DNR rules if they were active
@@ -248,31 +337,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
           }
 
-          if (rules.length > 0) {
-            await chrome.declarativeNetRequest.updateDynamicRules({
-              addRules: rules,
-              removeRuleIds: [],
-            });
-            await chrome.storage.local.set({
-              newTabBlockActive: true,
-              newTabBlockRuleIds: rules.map((r) => r.id),
-            });
-          }
-        }
-
-        // If newTabBlock was not active before game, remove the rules we activated
-        if (!snipingPreGameState.newTabBlockActive) {
-          const { newTabBlockRuleIds = [] } = await chrome.storage.local.get('newTabBlockRuleIds');
-          if (newTabBlockRuleIds.length > 0) {
+          await chrome.declarativeNetRequest.updateDynamicRules({
+            addRules: rules,
+            removeRuleIds: existingNewTabIds, // Remove any existing rules first to prevent duplicate ID crashes
+          });
+          await chrome.storage.local.set({
+            newTabBlockActive: true,
+            newTabBlockRuleIds: rules.map((r) => r.id),
+          });
+        } else {
+          if (existingNewTabIds.length > 0) {
             await chrome.declarativeNetRequest.updateDynamicRules({
               addRules: [],
-              removeRuleIds: newTabBlockRuleIds,
-            });
-            await chrome.storage.local.set({
-              newTabBlockActive: false,
-              newTabBlockRuleIds: [],
+              removeRuleIds: existingNewTabIds,
             });
           }
+          await chrome.storage.local.set({
+            newTabBlockActive: false,
+            newTabBlockRuleIds: [],
+          });
         }
 
         // Update badge
@@ -288,6 +371,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (err) {
         console.error('[AdSniper] RESTORE_SNIPING_STATE failed:', err);
         sendResponse({ ok: false, error: err.message });
+      } finally {
+        await chrome.storage.local.remove(['snipingActiveTabId', 'snipingGamePending']);
       }
     })();
     return true;
@@ -299,13 +384,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Set storage defaults on first install
-  const { nextRuleId } = await chrome.storage.local.get('nextRuleId');
+  const { nextRuleId, aiEnabled } = await chrome.storage.local.get(['nextRuleId', 'aiEnabled']);
   if (!nextRuleId) {
     await chrome.storage.local.set({
       nextRuleId: INITIAL_RULE_ID,
       monitoringEnabled: true,
       lockedCookies: {},
+      aiEnabled: false,
     });
+  } else if (aiEnabled === undefined) {
+    await chrome.storage.local.set({ aiEnabled: false });
   }
 
   // Fetch ad patterns on first install only
