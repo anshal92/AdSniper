@@ -203,6 +203,7 @@ adsniper/
 | `initAIAssistant()` | Reads/writes `aiEnabled` (default false); manages UI state & auto-collapse |
 | `checkAndDisplayAIStatus()` | Checks Gemini Nano availability, drives tri-state status light (green/yellow/red) |
 | `toggleAIAssistant()` | Toggles prompt section, auto-collapses/expands sections, frees memory when off |
+| `initAISettings()` | Configures System Prompt settings panel, wires gear icon, save/reset actions |
 | `handleAISend()` | Dispatches prompt to GeminiNanoClient with streaming output, auto-executes MCP actions, updates UI |
 | `setSectionCollapsed(section, isCollapsed)` | Programmatically collapses or expands Requests / Rules sections |
 | `toggleSectionCollapse(section)` | User toggle handler for collapsible section headers |
@@ -239,7 +240,8 @@ adsniper/
 | System | What it does |
 |---|---|
 | `GeminiNanoClient.getInstance()` | Static singleton managing active on-device Prompt API session |
-| `checkAvailability()` | Detects Prompt API, tests availability (`readily`/`after-download`/`unsupported`) |
+| `checkAvailability()` | Detects Prompt API, tests availability (`available`/`readily`/`downloadable`/`unsupported`) |
+| `getSystemPrompt()` | Retrieves active system prompt (honoring `customSystemPrompt` from storage or `DEFAULT_SYSTEM_PROMPT`) |
 | `getOrCreateSession()` | Lazy session initialization with AdSniper MCP tool system prompt |
 | `detectDirectIntent()` | Pre-dispatch regex intent classifier for instant 0ms command execution |
 | `extractActionJSON()` | Robust balanced-brace JSON extractor capable of parsing nested action arguments and native function syntax |
@@ -279,6 +281,7 @@ lockedCookies          Object: "domain::name" → full cookie object snapshot
 domCleanupEnabled      Boolean, default true
 iframeBlockerEnabled   Boolean, default false
 aiEnabled              Boolean, default false (controls Gemini Nano AI assistant UI)
+customSystemPrompt     String, user-customized system prompt for Gemini Nano LLM
 snipingGamePending     Boolean, true while waiting for page reload + game launch
 snipingPreGameState    Object: snapshot of all toggle states before game started
 snipingOpenNewTab      Boolean, whether to open new tab vs reload for game
@@ -354,7 +357,7 @@ The availability check queries `lm.availability()` or legacy `lm.capabilities()`
 
 ### 5.3 System Prompt Engineering & Anti-Hallucination Directives
 
-Gemini Nano runs with a concise system prompt injecting the AdSniper tool schema and strict governance constraints:
+Gemini Nano runs with a concise system prompt injecting the AdSniper tool schema, strict governance constraints, and tool execution boundaries:
 
 ```text
 You are AdSniper AI, an on-device Chrome extension assistant.
@@ -368,12 +371,22 @@ You have access to the following MCP Actions:
 - tool_inspect_requests(category): Audits recent network requests captured on the tab.
 - tool_toggle_feature(feature, state): Toggles 'mass_block', 'new_tab_block', 'dom_cleanup', or 'iframe_blocker'.
 
-When an action is appropriate, provide a concise explanation (1-2 sentences), followed immediately by an action block formatted exactly as:
+Rules for executing tools:
+1. ONLY execute an action tool if the user's request explicitly matches one of the available tools above.
+2. If the user asks for general information, page questions, anchor links, text summaries, or anything outside of these specific tools, DO NOT call any tool. Answer the user directly and concisely in natural language.
+3. When an action IS appropriate, provide a concise explanation (1-2 sentences), followed immediately by an action block formatted exactly as:
 ```action
 {"tool": "tool_name", "args": {"arg1": "value"}}
 ```
-If no action is needed, just answer concisely.
+4. NEVER recommend installing other extensions (e.g. uBlock Origin, AdBlock).
 ```
+
+#### System Prompt Configuration & Customization (⚙️ Settings Gear)
+AdSniper provides a settings drawer via the **⚙️ Gear Icon** in the AI assistant header:
+- **Direct Transparency**: Users can view the exact system prompt instruction currently provided to Gemini Nano.
+- **Customization & Persistence**: Users can tweak directives, modify rules, or adjust personas. Custom prompts are saved to `chrome.storage.local.set({ customSystemPrompt })`.
+- **Instant Hot-Reload**: Saving calls `session.destroy()` so the very next prompt creates a new session reflecting the updated prompt immediately.
+- **One-Click Reset**: The **🔄 Reset Default** button clears `customSystemPrompt` and re-applies `GeminiNanoClient.DEFAULT_SYSTEM_PROMPT`.
 
 #### Anti-Recommendation & In-Prompt Directives
 Small parameter models (like 3B Nano) frequently hallucinate or default to generic web advice (e.g. *"You should install uBlock Origin or AdBlock Plus"*). AdSniper prevents this with:
@@ -510,26 +523,30 @@ To enable full on-device Gemini Nano generative capabilities in Chromium, follow
 
 | Flag | Recommended Value | Purpose |
 |---|---|---|
-| `chrome://flags/#prompt-api-for-gemini-nano` | **Enabled** | Exposes the `window.ai.languageModel` API to web pages and extensions. |
-| `chrome://flags/#optimization-guide-on-device-model` | **Enabled BypassPerfRequirement** | Bypasses Google's hardware qualification check, ensuring model download on all compatible GPUs. |
+| `chrome://flags/#prompt-api` *(or `#prompt-api-for-gemini-nano`)* | **Enabled** | Exposes the `window.ai.languageModel` API to web pages and extensions. In modern Chromium builds, this flag is titled **Prompt API** (`#prompt-api`). |
+| `chrome://flags/#optimization-guide-on-device-model` | **Enabled BypassPerfRequirement** *(if present)* | Bypasses Google's hardware qualification check, ensuring model download on all compatible GPUs. |
 
-#### 3. Component Download (`chrome://components`)
-1. Navigate to `chrome://components/`.
-2. Locate **Optimization Guide On Device Model**.
-3. Click **Check for update**.
-4. Confirm download completes (model version changes from `0.0.0.0` to active release, status displays `Up-to-date`).
+> **Note**: If Chrome indicates *"Nearly up to date! Relaunch Chrome to finish updating"*, you must relaunch Chrome for the browser binaries and flags to activate. Until restarted, `window.ai` remains `undefined`.
+
+#### 3. Component & Model Diagnostics (`chrome://on-device-internals` & `chrome://components`)
+- **Primary Dashboard**: Navigate to `chrome://on-device-internals` to inspect real-time model status, installation path, device hardware qualification, and active model execution.
+- **Component Updater**: Navigate to `chrome://components/`, locate **Optimization Guide On Device Model**, and click **Check for update**.
 
 #### 4. DevTools Diagnostic Console Commands
-```javascript
-// Check model availability
-const availability = await window.ai.languageModel.availability();
-console.log("Nano Availability:", availability); // "readily" | "after-download" | "no"
+> **Important**: Test within an **Extension Context** (e.g. Right-click AdSniper popup → **Inspect**), as Chrome isolates on-device AI from regular web tabs by default.
 
-// Test prompt execution
-const session = await window.ai.languageModel.create();
+In modern Chrome, use the W3C standard **`LanguageModel`** interface:
+
+```javascript
+// 1. Check model availability
+const availability = await (window.LanguageModel || window.ai?.languageModel).availability();
+console.log("Nano Availability:", availability); // "readily" | "after-download" | "downloadable" | "unavailable"
+
+// 2. Test session creation and prompt execution
+const session = await (window.LanguageModel || window.ai?.languageModel).create();
 const response = await session.prompt("Summarize ad blocking in 5 words.");
 console.log("Model Response:", response);
-session.destroy(); // Free memory
+session.destroy(); // Always free memory
 ```
 
 ---
