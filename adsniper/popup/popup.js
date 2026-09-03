@@ -60,10 +60,10 @@ async function sendToTab(message) {
       return { error: 'unsupported_protocol' };
     }
 
-    // Inject content script into the already-open tab
+    // Inject content scripts into the already-open tab
     await chrome.scripting.executeScript({
       target: { tabId: activeTabId },
-      files:  ['content/content.js'],
+      files:  ['content/sniper-game.js', 'content/content.js'],
     });
 
     // Brief wait for listeners to register and storage init to complete
@@ -498,7 +498,7 @@ async function toggleMassBlock() {
           hosts:    adHosts,
           patterns: adPatterns,
         });
-        if (response?.total) updateHiddenStat(response.total);
+        if (response && response.total) updateHiddenStat(response.total);
       } catch { /* Tab may not support content scripts (chrome://, PDF, etc.) */ }
     }
 
@@ -670,7 +670,7 @@ async function handleCleanPage() {
   btn.textContent = '⏳ Cleaning…';
   try {
     const response = await sendToTab({ type: 'CLEAN_PAGE' });
-    if (response?.total !== undefined) {
+    if (response && response.total !== undefined) {
       updateHiddenStat(response.total);
     }
   } catch (err) {
@@ -701,7 +701,7 @@ function updateHiddenStat(total) {
 async function handleElementPicker() {
   try {
     const resp = await sendToTab({ type: 'START_ELEMENT_PICKER' });
-    if (resp?.error === 'unsupported_protocol') return;
+    if (resp && resp.error === 'unsupported_protocol') return;
   } catch (err) {
     console.warn('[AdSniper] Could not start element picker:', err.message);
     return;
@@ -723,7 +723,7 @@ async function initIframeBlockerToggle() {
   // Fetch initial removed count from content script
   try {
     const resp = await sendToTab({ type: 'GET_IFRAME_STATS' });
-    if (resp?.total !== undefined) updateIframeStat(resp.total);
+    if (resp && resp.total !== undefined) updateIframeStat(resp.total);
   } catch { /* No content script on this tab */ }
 
   toggle.addEventListener('change', async () => {
@@ -735,7 +735,7 @@ async function initIframeBlockerToggle() {
         type: 'TOGGLE_IFRAME_BLOCKER',
         enabled: next,
       });
-      if (resp?.total !== undefined) updateIframeStat(resp.total);
+      if (resp && resp.total !== undefined) updateIframeStat(resp.total);
     } catch (err) {
       console.warn('[AdSniper] iFrame blocker toggle failed:', err.message);
     }
@@ -1041,28 +1041,44 @@ async function handleSnipingGame() {
 
     await chrome.storage.local.set({ snipingPreGameState: preGameState });
 
-    // ── 2. Disable all blocking ────────────────────────────
-    // Remove mass-block DNR rules
+    // ── 2. Disable in-page blocking so ad components load in DOM ──
+    // Remove mass-block DNR rules so ad elements load inside the page
     if (preGameState.massBlockActive && preGameState.massBlockRuleIds.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({
         addRules: [],
         removeRuleIds: preGameState.massBlockRuleIds,
       });
     }
-    // Remove new-tab-block DNR rules
-    if (preGameState.newTabBlockActive && preGameState.newTabBlockRuleIds.length > 0) {
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        addRules: [],
-        removeRuleIds: preGameState.newTabBlockRuleIds,
-      });
+
+    // Keep or activate new-tab-block DNR rules so ads cannot open new tabs
+    let activeNewTabRuleIds = preGameState.newTabBlockRuleIds;
+    if (!preGameState.newTabBlockActive || activeNewTabRuleIds.length === 0) {
+      const { adHosts = [] } = await chrome.storage.local.get('adHosts');
+      const rules = [];
+      let id = NEW_TAB_BLOCK_BASE_ID;
+      for (const host of adHosts) {
+        if (!host) continue;
+        if (id >= 50000) break;
+        rules.push({
+          id: id++,
+          priority: 3,
+          action: { type: 'block' },
+          condition: { urlFilter: `||${host}`, resourceTypes: ['main_frame'] },
+        });
+      }
+      if (rules.length > 0) {
+        await chrome.declarativeNetRequest.updateDynamicRules({ addRules: rules, removeRuleIds: [] });
+        activeNewTabRuleIds = rules.map((r) => r.id);
+      }
     }
 
-    // Disable storage flags (so content script doesn't auto-cleanup on new page)
+    // Disable in-page DOM cleanup and mass-block (so ads are visible for scanning)
+    // while keeping new-tab ad blocking active
     await chrome.storage.local.set({
       massBlockActive: false,
       massBlockRuleIds: [],
-      newTabBlockActive: false,
-      newTabBlockRuleIds: [],
+      newTabBlockActive: true,
+      newTabBlockRuleIds: activeNewTabRuleIds,
       domCleanupEnabled: false,
       iframeBlockerEnabled: false,
     });
