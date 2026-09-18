@@ -1,10 +1,10 @@
 # 🎯 AdSniper
 
-> **Surgical Ad Blocking, Cookie Control, On-Device AI Assistant (Gemini Nano) & Gamified Ad Sniping for Chrome (Manifest V3)**
+> **Surgical Ad Blocking, Cookie Control, On-Device AI Personal Assistant (Gemini Nano), Scratchpad & Todo Lists, and Gamified Ad Sniping for Chrome (Manifest V3)**
 
-AdSniper is a powerful, privacy-first Chromium extension designed to give you surgical control over network traffic, intrusive popups, and cookies—featuring an **on-device Gemini Nano AI Assistant** powered by Chrome's Built-in AI, alongside a first-of-its-kind **Gamified Sniping Mode** that transforms irritating page ads into flying targets you can shoot down!
+AdSniper is a powerful, privacy-first Chromium extension designed to give you surgical control over network traffic, intrusive popups, and cookies—featuring an **on-device Gemini Nano Personal Assistant** powered by Chrome's Built-in AI, an integrated **Scratchpad & Todo List** system, and a first-of-its-kind **Gamified Sniping Mode** that transforms irritating page ads into flying targets you can shoot down!
 
-Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency declarative rule engines (`declarativeNetRequest`), heuristic DOM sanitization, isolated Canvas overlays, and local LLM execution without dragging down browser performance or sending your data to external servers.
+Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency declarative rule engines (`declarativeNetRequest`), heuristic DOM sanitization, isolated Canvas overlays, and local LLM execution across four dedicated tabs—without dragging down browser performance or sending your data to external servers.
 
 ---
 
@@ -41,21 +41,43 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
   - **Celebration Fireworks**: Scoring an accuracy of **> 80%** triggers a celebratory fireworks display around the results screen!
   - **Interactive Results Screen**: Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
 
-### 🤖 6. On-Device Gemini Nano AI Assistant & Autonomous MCP Tools
+### 🤖 6. On-Device Gemini Nano AI — Dual-Engine Architecture
+AdSniper runs **two independent AI engines** on-device, each with its own dedicated system prompt and session:
+
+#### 🛡️ AdBlocker AI (Action-Only Engine)
 - **100% Local Built-in AI**: Uses Chrome's native **Prompt API** (`window.ai.languageModel` / `LanguageModel`) to run Google's **Gemini Nano** directly on your device. Zero external cloud API calls, zero latency penalty, and zero private data leakage.
+- **Strict Action-Only Prompt**: This engine is constrained to only emit MCP tool JSON—it never produces conversational text. Optimized for deterministic ad blocking commands.
 - **Autonomous Model Context Protocol (MCP) Tools**:
-  - `tool_inspect_requests`[WIP]: Produces instant forensic ad & tracker audit reports, decoding exfiltrated query parameters (Publisher IDs, Auction Bids, User Tracking UUIDs, Topics/FLEDGE data).
+  - `tool_inspect_requests`: Produces instant forensic ad & tracker audit reports, decoding exfiltrated query parameters (Publisher IDs, Auction Bids, User Tracking UUIDs, Topics/FLEDGE data).
   - `tool_remove_overlay`: Detects and scrubs anti-adblock modals, paywalls, sticky video overlays, and unfreezes locked body scrolling.
-  - `tool_add_block_rule`[WIP]: Synthesizes dynamic DeclarativeNetRequest block rules from natural language (e.g. *"Block analytics.foo.com"*).
+  - `tool_add_block_rule`: Synthesizes dynamic DeclarativeNetRequest block rules from natural language (e.g. *"Block analytics.foo.com"*).
   - `tool_hide_element_css`: Generates and injects custom CSS selector rules (`display: none !important`) to eliminate annoying banners and clutter.
   - `tool_extract_clean_content`: Extracts clean, readable article text stripped of sidebars, ads, and widgets.
-  - `tool_toggle_feature`[WIP]: Voice/text command shield switcher (`new_tab_block`, `mass_block`, `dom_cleanup`, etc.).
+  - `tool_toggle_feature`: Voice/text command shield switcher (`new_tab_block`, `mass_block`, `dom_cleanup`, etc.).
+  - `tool_execute_js_script`: Executes custom JavaScript in the active tab to inspect, query, or extract DOM data.
 - **Intent-First Deterministic Dispatcher**: Common commands (e.g., *"kill popups"*, *"audit trackers"*, *"remove on click new tab"*) execute with **0ms latency** via deterministic intent matching, guaranteeing browser action without waiting for model token generation.
 - **Resilient Heuristics Fallback**: Even if Chrome flags are disabled or Gemini Nano is still downloading, AdSniper automatically runs all MCP tools via local deterministic heuristics.
 - **Tri-State Status Indicator**:
-  - 🟢 **Blinking Green**: Nano Ready[With issues] (or Heuristics Mode active & running).
+  - 🟢 **Blinking Green**: Nano Ready (or Heuristics Mode active & running).
   - 🟡 **Pulsing Yellow**: Initializing or model downloading in Chrome components.
   - 🔴 **Static Red**: AI engine offline / unavailable.
+
+#### ✨ Personal Assistant (Conversational Engine)
+- **Dedicated Chat Interface**: A separate "✨ Personal Assistant" tab with a full chat history UI, message bubbles, and streaming responses.
+- **Conversational System Prompt**: Uses a higher-temperature (0.7) session tuned for natural conversation—answering questions, performing calculations, fixing grammar, and summarizing text—without blindly triggering tools.
+- **Live LLM Telemetry Dashboard**:
+  - **Token Counter**: Displays `Input + Output / 32,768` context utilization in real time using `session.countPromptTokens()`.
+  - **Generation Speed**: Shows tokens per second (`t/s`) during streaming.
+  - **Adjustable Context Window**: Configurable conversation history retention (default: last 10 turns, max 50).
+- **Quick-Action Feature Chips**: One-click prompt templates for common tasks: 📝 Summarise Page, 🧮 Calculator, ✍️ Grammar Fixer, 🗒️ Save Note, ✅ Add Todo.
+- **MCP Tools (Selective)**: The assistant can call `tool_execute_js_script`, `tool_add_scratchpad`, and `tool_add_todo`—but **only when explicitly requested**. Normal questions are answered conversationally.
+
+### 📋 7. Scratchpad & Todo Lists
+- **Dedicated "📋 Lists" Tab**: A side-by-side panel with a persistent **Scratchpad** notepad and a **Todo List** task manager.
+- **Manual & AI-Powered**: Add notes and tasks manually, or let the Personal Assistant write to them autonomously during chat (e.g., *"Summarize this article and save key points to my scratchpad"* or *"Add 'review PR' to my todo list"*).
+- **Todo Management**: Add tasks, check them off, clear completed items, or delete individual tasks.
+- **Persistent Storage**: All data is saved instantly to `chrome.storage.local` and persists across popup reopens and browser restarts.
+- **Real-Time Sync**: AI writes are reflected instantly in the Lists tab via DOM custom events (`AST_SCRATCHPAD_UPDATE`, `AST_TODO_ADD`)—no manual refresh required.
 
 ---
 
@@ -209,13 +231,14 @@ AdSniper/
 │   ├── service-worker.js          # Background service worker (DNR & state management)
 │   ├── ai/
 │   │   └── nano-client.js         # Gemini Nano on-device AI client & MCP tool dispatcher
+│   │                              # (Dual-engine: AdBlocker AI + Personal Assistant)
 │   ├── content/
 │   │   ├── content.js             # Content script (DOM sanitization & picker bridge)
 │   │   └── sniper-game.js         # Canvas 2D game engine (physics, targets & fireworks)
 │   ├── popup/
-│   │   ├── popup.html             # Extension dashboard interface
+│   │   ├── popup.html             # Four-tab extension dashboard (Ad Blocker, Assistant, Lists, Cookies)
 │   │   ├── popup.css              # Dark-mode styling and animations
-│   │   └── popup.js               # Dashboard controller & request monitor
+│   │   └── popup.js               # Dashboard controller, request monitor, chat & lists logic
 │   ├── rules/
 │   │   └── rules.json             # Static declarativeNetRequest rulesets
 │   ├── data/

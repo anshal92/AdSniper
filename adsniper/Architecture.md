@@ -1,21 +1,23 @@
 # AdSniper — Architecture & Knowledge Base
 
-> **Version**: 2.1 | **Platform**: Chrome Extension (Manifest V3) | **Location**: `TestProject/adsniper/`
+> **Version**: 2.2 | **Platform**: Chrome Extension (Manifest V3) | **Location**: `TestProject/adsniper/`
 
 ---
 
 ## 1. Summary
 
-AdSniper is a privacy-first Chrome extension built to give users surgical control over network requests, intrusive popups, and cookies, while introducing gamified ad sniping and an autonomous **on-device Gemini Nano AI Assistant**.
+AdSniper is a privacy-first Chrome extension built to give users surgical control over network requests, intrusive popups, and cookies, while introducing gamified ad sniping, an autonomous **on-device Gemini Nano AI** with dual engines (AdBlocker AI + Personal Assistant), and integrated **Scratchpad & Todo Lists**.
 
 | Tab / Subsystem | Purpose |
 |---|---|
 | 🛡 **Ad Blocker** | Live network request monitor, pattern-based blocking, mass-block all known ads, new-tab ad blocking, DOM cleanup, element picker, iframe remover |
+| ✨ **Personal Assistant** | Conversational on-device AI chat (Gemini Nano) with adjustable context window, live token/speed telemetry, quick-action feature chips, and selective MCP tool execution |
+| 📋 **Lists** | Side-by-side persistent Scratchpad notepad and Todo List task manager, writable by both the user and the AI assistant |
 | 🍪 **Cookie Editor** | View, edit, lock (prevent page from changing), and delete cookies for the current tab |
-| 🤖 **Gemini Nano AI** | On-device Built-in AI (Chrome Prompt API) running 100% locally; natural language ad control, forensic tracker audits, overlay & paywall removal, and autonomous MCP tools |
+| 🤖 **Gemini Nano AI (AdBlocker)** | On-device Built-in AI (Chrome Prompt API) running 100% locally; natural language ad control, forensic tracker audits, overlay & paywall removal, and autonomous MCP tools |
 | 🔫 **Sniping Mode** | Interactive Canvas game that temporarily pauses blocking, scans page ads, and converts them into flying bird targets |
 
-It uses **Manifest V3** exclusively. Network blocking is performed natively by Chrome's `declarativeNetRequest` (DNR) engine, not `webRequest` blocking. The DOM is manipulated via an isolated content script. The AI assistant runs directly in the browser's GPU/VRAM via Chrome's Built-in AI, executing lightweight Model Context Protocol (MCP) actions.
+It uses **Manifest V3** exclusively. Network blocking is performed natively by Chrome's `declarativeNetRequest` (DNR) engine, not `webRequest` blocking. The DOM is manipulated via an isolated content script. The AI runs directly in the browser's GPU/VRAM via Chrome's Built-in AI, executing lightweight Model Context Protocol (MCP) actions through two dedicated sessions.
 
 ---
 
@@ -32,16 +34,30 @@ It uses **Manifest V3** exclusively. Network blocking is performed natively by C
 │  │      popup.html      │    │     service-worker.js     │    │    Gemini Nano      │  │
 │  │      popup.js        │    │                           │    │ (window.ai / Prompt)│  │
 │  │                      │    │ 1. webRequest logger      │    └──────────┬──────────┘  │
-│  │  ┌────────────────┐  │    │ 2. Tab cleanup            │               │             │
-│  │  │   AI CLIENT    │  │    │ 3. Block count & DOM msg  │               │ local IPC   │
-│  │  │ nano-client.js │◄─┼────┼───────────────────────────┼───────────────┘             │
-│  │  └───────┬────────┘  │    │ 4. Cookie lock enforcer   │                             │
-│  │          │           │    │ 5. ADD_BLOCK_RULE handler │                             │
-│  │          │ calls     │    │ 6. Sniping state restore  │                             │
-│  │          │ chrome.*  │    │ 7. onInstalled pattern DL │                             │
-│  └──────────┼───────────┘    └─────────────▲─────────────┘                             │
-│             │ chrome.tabs.sendMessage     │ runtime.sendMessage                        │
-│             ▼                             │                                            │
+│  │  4 Tabs:             │    │ 2. Tab cleanup            │               │             │
+│  │  🛡 Ad Blocker       │    │ 3. Block count & DOM msg  │               │ local IPC   │
+│  │  ✨ Assistant        │    │ 4. Cookie lock enforcer   │               │             │
+│  │  📋 Lists            │    │ 5. ADD_BLOCK_RULE handler │               │             │
+│  │  🍪 Cookie Editor    │    │ 6. Sniping state restore  │               │             │
+│  │                      │    │ 7. onInstalled pattern DL │               │             │
+│  │  ┌────────────────┐  │    └─────────────▲─────────────┘               │             │
+│  │  │   AI CLIENT    │  │                  │                             │             │
+│  │  │ nano-client.js │◄─┼──────────────────┼─────────────────────────────┘             │
+│  │  │                │  │                  │                                           │
+│  │  │ Session 1:     │  │                  │                                           │
+│  │  │  AdBlocker AI  │  │                  │                                           │
+│  │  │  (temp 0.2)    │  │                  │                                           │
+│  │  │                │  │                  │                                           │
+│  │  │ Session 2:     │  │                  │                                           │
+│  │  │  Assistant AI  │  │                  │                                           │
+│  │  │  (temp 0.7)    │  │                  │                                           │
+│  │  └───────┬────────┘  │                  │                                           │
+│  │          │           │                  │                                           │
+│  │          │ calls     │                  │                                           │
+│  │          │ chrome.*  │                  │                                           │
+│  └──────────┼───────────┘                  │                                           │
+│             │ chrome.tabs.sendMessage      │ runtime.sendMessage                       │
+│             ▼                              │                                           │
 │  ┌────────────────────────────────────────┴─────────────────────────────────────────┐  │
 │  │                             CONTENT SCRIPT (per-tab)                             │  │
 │  │                                content/content.js                                │  │
@@ -59,10 +75,11 @@ It uses **Manifest V3** exclusively. Network blocking is performed natively by C
 │  │        declarativeNetRequest         │    │         chrome.storage.local         │  │
 │  │              DNR Engine              │    │          (Persistent State)          │  │
 │  │                                      │    │                                      │  │
-│  │   Static: rules/rules.json           │    │   requests_{tabId} (last 200 reqs)   │  │
+│  │   Static: rules/rules.json           │    │   requests_{tabId} (last 100 reqs)   │  │
 │  │   Dynamic user rules: 1001–39999     │    │   adHosts / adPatterns               │  │
 │  │   Dynamic newtab-block: 40001–49999  │    │   massBlockActive / RuleIds          │  │
 │  │   Dynamic mass-block: 50001+         │    │   newTabBlockActive / RuleIds        │  │
+│  │                                      │    │   astScratchpad / astTodos           │  │
 │  └──────────────────────────────────────┘    └──────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -94,11 +111,18 @@ GeminiNanoClient.getInstance()
         │    [Pre-Executes MCP Action: 0ms Latency]
         │        │ (e.g. tool_remove_overlay, tool_inspect_requests)
         │
-        ├──► 2. Prompt API Session Manager (getOrCreateSession)
-        │        │ Lazy window.ai.languageModel.create() with system directives
-        │        ▼
-        │    Streaming & Parsing (promptStreaming)
-        │        │
+        ├──► 2a. AdBlocker Session (getOrCreateSession)
+        │         │ System: DEFAULT_SYSTEM_PROMPT (action-only, temp 0.2)
+        │         │ Used by: Ad Blocker tab → processPrompt()
+        │         ▼
+        │     Streaming & Parsing (promptStreaming)
+        │
+        ├──► 2b. Assistant Session (getAssistantSession)
+        │         │ System: ASSISTANT_SYSTEM_PROMPT (conversational, temp 0.7)
+        │         │ Used by: Personal Assistant tab → processAssistantPrompt()
+        │         ▼
+        │     Streaming with Token Telemetry & Speed Tracking
+        │
         │        ├──► Token Sanitizer (cleanActionFromReply) ──► Real-Time Stream to UI
         │        │      (Strips native tool_name{...}, backtick blocks, raw JSON)
         │        │
@@ -112,7 +136,9 @@ GeminiNanoClient.getInstance()
                  ├── tool_extract_clean_content ──► Content: AI_EXTRACT_CONTENT
                  ├── tool_inspect_requests ──────► Storage: requests_{tabId} (Forensic Report)
                  ├── tool_toggle_feature ────────► Popup: toggleNewTabBlock / toggleMassBlock
-                 └── tool_execute_js_script ─────► Content: AI_EXECUTE_SCRIPT (Executor, Verifier, Fixer)
+                 ├── tool_execute_js_script ─────► Content: AI_EXECUTE_SCRIPT (Executor, Verifier, Fixer)
+                 ├── tool_add_scratchpad ────────► DOM Event: AST_SCRATCHPAD_UPDATE → Lists UI
+                 └── tool_add_todo ──────────────► DOM Event: AST_TODO_ADD → Lists UI
 ```
 
 ### Element Picker Flow
@@ -159,14 +185,15 @@ adsniper/
 ├── manifest.json              Extension config, permissions, DNR ruleset, web_accessible_resources
 ├── service-worker.js          Background SW (webRequest logging, DNR rules, cookie lock, state cleanup)
 ├── ai/
-│   └── nano-client.js         Gemini Nano on-device AI static singleton & MCP tool dispatcher (~950 lines)
+│   └── nano-client.js         Gemini Nano on-device AI dual-engine client & MCP tool dispatcher
+│                              (AdBlocker AI session + Personal Assistant session)
 ├── content/
 │   ├── content.js             Content script: DOM sanitization, overlays, picker bridge, AI message handlers
 │   └── sniper-game.js         Sniping game engine (loaded on-demand via web_accessible_resources)
 ├── popup/
-│   ├── popup.html             Two-tab dark-theme UI + Sniping button + Enable AI button & prompt section
+│   ├── popup.html             Four-tab dark-theme UI (Ad Blocker, Assistant, Lists, Cookies) + Sniping button
 │   ├── popup.css              Dark-theme styling, animations, blinking/pulsing status indicators
-│   └── popup.js               All popup logic, AI session coordination, direct chrome.* API calls
+│   └── popup.js               All popup logic, AI session coordination, chat history, lists management
 ├── data/
 │   └── ad-patterns.json       Fallback: 64 ad hosts + 30 URL patterns
 └── rules/
@@ -217,6 +244,10 @@ adsniper/
 | `refreshCookies()` | Calls `chrome.cookies.getAll`, renders with lock/delete |
 | `isCookieAccessibleUrl(url)` | Guards against chrome:// / PDF pages |
 | `toggleCookieLock(cookie)` | Writes/removes from `lockedCookies` in storage |
+| `initPersonalAssistant()` | Wires up Assistant tab: send button, Enter key, feature chip buttons, context size input |
+| `appendAstMessage(role, text)` | Creates and appends a styled chat bubble (user/bot/system) to the Assistant history |
+| `handleAstSend()` | Dispatches prompt to `processAssistantPrompt()` with streaming output, token stats, and MCP action handling |
+| `initListsPanel()` | Initializes Scratchpad and Todo List panels, loads from storage, wires event listeners and MCP custom events |
 
 ### content.js — Key Functions
 
@@ -240,16 +271,18 @@ adsniper/
 
 | System | What it does |
 |---|---|
-| `GeminiNanoClient.getInstance()` | Static singleton managing active on-device Prompt API session |
+| `GeminiNanoClient.getInstance()` | Static singleton managing active on-device Prompt API sessions |
 | `checkAvailability()` | Detects Prompt API, tests availability (`available`/`readily`/`downloadable`/`unsupported`) |
 | `getSystemPrompt()` | Retrieves active system prompt (honoring `customSystemPrompt` from storage or `DEFAULT_SYSTEM_PROMPT`) |
-| `getOrCreateSession()` | Lazy session initialization with AdSniper MCP tool system prompt |
+| `getOrCreateSession()` | Lazy session initialization with AdBlocker MCP tool system prompt (temp 0.2) |
+| `getAssistantSession()` | Lazy session initialization with conversational Assistant system prompt (temp 0.7) |
 | `detectDirectIntent()` | Pre-dispatch regex intent classifier for instant 0ms command execution |
 | `extractActionJSON()` | Robust balanced-brace JSON extractor capable of parsing nested action arguments and native function syntax |
 | `cleanActionFromReply()` | Strips action blocks, raw tool JSON, and third-party recommendations from display text |
 | `generateAuditReport()` | Generates forensic audit report detailing intercepted ad calls and exfiltrated parameters |
-| `processPrompt()` | Executes prompt with intent pre-dispatch, streaming token support, few-shot prompt constraints, and action parsing |
-| `executeMcpAction()` | Dispatches actions: `tool_add_block_rule`, `tool_remove_overlay`, `tool_hide_element_css`, `tool_extract_clean_content`, `tool_inspect_requests`, `tool_toggle_feature` |
+| `processPrompt()` | AdBlocker engine: executes prompt with intent pre-dispatch, streaming, and action parsing |
+| `processAssistantPrompt()` | Assistant engine: executes prompt with conversation history, token telemetry, speed tracking, and selective MCP tools |
+| `executeMcpAction()` | Dispatches actions: `tool_add_block_rule`, `tool_remove_overlay`, `tool_hide_element_css`, `tool_extract_clean_content`, `tool_inspect_requests`, `tool_toggle_feature`, `tool_execute_js_script`, `tool_add_scratchpad`, `tool_add_todo` |
 | `executeHeuristicFallback()` | Instant on-device heuristic execution when model is downloading or flags inactive |
 | `destroy()` | Explicitly calls `session.destroy()` to immediately reclaim RAM/VRAM |
 
@@ -286,6 +319,8 @@ customSystemPrompt     String, user-customized system prompt for Gemini Nano LLM
 snipingGamePending     Boolean, true while waiting for page reload + game launch
 snipingPreGameState    Object: snapshot of all toggle states before game started
 snipingOpenNewTab      Boolean, whether to open new tab vs reload for game
+astScratchpad          String, persistent scratchpad notepad content
+astTodos               Array<{id, text, done}>, persistent todo list items
 ```
 
 ### Critical Constraints
@@ -313,19 +348,21 @@ AdSniper integrates Chrome's native Built-in AI (the **Prompt API** / **Language
 │                                                                        │
 │  1. Check Availability (window.ai.languageModel / window.ai.assistant) │
 │  2. Intent Pre-Dispatch (0ms Deterministic Regex Matcher)              │
-│  3. Lazy Session Creation (Temperature: 0.2, TopK: 3, System Prompt)   │
-│  4. Prompt Streaming with Token-Level Sanitization                     │
+│  3a. AdBlocker Session (Temperature: 0.2, TopK: 3, Action-Only)       │
+│  3b. Assistant Session (Temperature: 0.7, TopK: 3, Conversational)    │
+│  4. Prompt Streaming with Token-Level Sanitization & Telemetry         │
 │  5. Multi-Syntax Action Parser (Native, Markdown & Balanced JSON)      │
-│  6. Autonomous MCP Tool Execution                                      │
+│  6. Autonomous MCP Tool Execution (9 tools)                            │
 │  7. Resilient Heuristic Fallback Engine                                │
-│  8. Memory-Safe Session Teardown (VRAM Reclamation)                   │
+│  8. Memory-Safe Dual-Session Teardown (VRAM Reclamation)              │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 1. **Zero External Surface**: No user prompt, visited URL, cookie, or network payload is ever transmitted over the network.
 2. **Deterministic Pre-Dispatch**: User commands that map directly to browser actions (e.g. *"kill popups"*, *"audit trackers"*) execute **before or in parallel with** the model output. This guarantees instantaneous browser responsiveness.
-3. **Dual-Engine Resilience**: If Gemini Nano flags are disabled, hardware requirements are not met, or the model is downloading, AdSniper transitions to **Heuristics Mode** with zero feature loss for core commands.
-4. **Memory Conservation**: Models running on device occupy 1.5 GB–2.5 GB of system/GPU memory. The session is lazily initialized upon opening AI mode and explicitly freed via `session.destroy()` upon popup closing or toggling AI off.
+3. **Dual-Engine Isolation**: The AdBlocker AI session uses a strict action-only prompt (temp 0.2) that never produces conversational text. The Personal Assistant session uses a conversational prompt (temp 0.7) that answers naturally and only calls tools when explicitly requested. This prevents cross-contamination.
+4. **Dual-Engine Resilience**: If Gemini Nano flags are disabled, hardware requirements are not met, or the model is downloading, AdSniper transitions to **Heuristics Mode** with zero feature loss for core commands.
+5. **Memory Conservation**: Models running on device occupy 1.5 GB–2.5 GB of system/GPU memory. Sessions are lazily initialized and explicitly freed via `session.destroy()` upon popup closing or toggling AI off.
 
 ---
 
@@ -444,6 +481,8 @@ During streaming (`session.promptStreaming`), chunks containing raw action JSON 
 | `tool_inspect_requests` | `category` | Queries `chrome.storage.local.get('requests_{tabId}')` and `adHosts`. Compiles the forensic audit report with decoded query parameters. |
 | `tool_toggle_feature` | `feature`, `state` | Programmatically triggers `toggleNewTabBlock()`, `toggleMassBlock()`, or updates storage flags. |
 | `tool_execute_js_script` | `code`, `description` | Runs small JS programs in tab DOM context. Serves as Executor, Verifier, and Fixer (syntax repair, DOM node serialization, domain fallback heuristics, and Nano repair loops). Returns verified markdown tables and lists. |
+| `tool_add_scratchpad` | `content`, `append` | Dispatches `AST_SCRATCHPAD_UPDATE` CustomEvent to the Lists UI. If `append` is true, appends to existing scratchpad content; otherwise replaces it. |
+| `tool_add_todo` | `task` | Dispatches `AST_TODO_ADD` CustomEvent to the Lists UI, adding a new task item with auto-generated ID and unchecked state. |
 
 ---
 
@@ -636,9 +675,62 @@ case 'MY_TYPE':
 | `AI_REMOVE_OVERLAY` | Popup/AI → Content | content.js |
 | `AI_HIDE_SELECTOR { selector }` | Popup/AI → Content | content.js |
 | `AI_EXTRACT_CONTENT` | Popup/AI → Content | content.js |
+| `AST_SCRATCHPAD_UPDATE { content, append }` | nano-client.js → popup.js (DOM CustomEvent) | popup.js |
+| `AST_TODO_ADD { task }` | nano-client.js → popup.js (DOM CustomEvent) | popup.js |
 
-### Personal Assistant
-Added in v2.1, the Personal Assistant tab allows conversational interaction with the on-device Gemini Nano model, tracking prompt/response token sizes and maintaining an adjustable multi-turn conversation context.
+#### Personal Assistant Tab (v2.2)
 
-### Lists and Persistence
-The Lists feature relies on the \stScratchpad\ and \stTodos\ keys in \chrome.storage.local\. It exposes \AST_SCRATCHPAD_UPDATE\ and \AST_TODO_ADD\ DOM events so that the injected Gemini Nano MCP client can execute user commands that dynamically update the UI without manual refreshing.
+The Personal Assistant is a dedicated conversational interface powered by a **separate** Gemini Nano session with its own system prompt (`ASSISTANT_SYSTEM_PROMPT`).
+
+#### Key Design Decisions
+1. **Separate Session**: The Assistant uses `getAssistantSession()` (temperature 0.7, conversational prompt) while the AdBlocker AI uses `getOrCreateSession()` (temperature 0.2, action-only prompt). This prevents the Assistant from blindly executing MCP tools on every conversational query.
+2. **Token Telemetry**: `processAssistantPrompt()` tracks input token count via `session.countPromptTokens()` and output token count, displaying both alongside generation speed (`tokens/sec`) in the stats bar.
+3. **Adjustable Context**: Users can configure how many conversation turns (1–50) are retained in the prompt context via `#ast-context-size`. History is stored in-memory as `astHistory[]` and truncated before each prompt.
+4. **Feature Chips**: One-click prompt templates pre-fill the input textarea for: Summarise Page, Calculator, Grammar Fixer, Save Note, Add Todo.
+
+#### Assistant-Specific MCP Tools
+| Tool | Triggered When | Effect |
+|---|---|---|
+| `tool_execute_js_script` | User asks to inspect/extract page data | Runs JS in active tab, returns structured result |
+| `tool_add_scratchpad` | User says "save to scratchpad" / "save note" | Dispatches `AST_SCRATCHPAD_UPDATE` event to Lists UI |
+| `tool_add_todo` | User says "add to todo" / "add task" | Dispatches `AST_TODO_ADD` event to Lists UI |
+
+#### Inter-Component Communication (Assistant → Lists)
+Because `nano-client.js` and `popup.js` share the same extension popup process, MCP tool handlers dispatch DOM `CustomEvent`s that `popup.js` listens to:
+
+```javascript
+// nano-client.js (inside executeMcpAction)
+window.dispatchEvent(new CustomEvent('AST_SCRATCHPAD_UPDATE', {
+  detail: { content: args.content, append: args.append !== false }
+}));
+
+// popup.js (inside initListsPanel)
+window.addEventListener('AST_SCRATCHPAD_UPDATE', (e) => {
+  scratchpad.value = e.detail.append ? scratchpad.value + '\n\n' + e.detail.content : e.detail.content;
+  chrome.storage.local.set({ astScratchpad: scratchpad.value });
+});
+```
+
+### Lists Tab (Scratchpad & Todo)
+
+The Lists tab provides persistent user-facing data storage accessible from both manual input and AI-driven writes.
+
+#### Storage Schema
+```
+astScratchpad    String    Free-form notepad text, persisted on every keystroke
+astTodos         Array     [{id: Number (Date.now), text: String, done: Boolean}]
+```
+
+#### UI Components
+| Component | Element ID | Behavior |
+|---|---|---|
+| Scratchpad textarea | `#scratchpad-input` | Auto-saves on `input` event; cleared via 🗑️ button |
+| Todo list | `#todo-list` | Renders checkboxes, text, and ✕ delete buttons per item |
+| Todo input | `#todo-input` + `#todo-add-btn` | Adds new task on Enter or button click |
+| Clear completed | `#todo-clear` | Filters out `done === true` items |
+
+#### DOM Events for AI Integration
+| Event Name | Payload | Source |
+|---|---|---|
+| `AST_SCRATCHPAD_UPDATE` | `{ content: string, append: boolean }` | `executeMcpAction('tool_add_scratchpad')` |
+| `AST_TODO_ADD` | `{ task: string }` | `executeMcpAction('tool_add_todo')` |
