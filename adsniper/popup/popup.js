@@ -196,6 +196,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currentTab === 'adblocker') await refreshAdBlocker();
     else await refreshCookies();
   }, 2000);
+  
+  await initPersonalAssistant();
+  await initListsPanel();
 });
 
 window.addEventListener('unload', () => {
@@ -1468,5 +1471,243 @@ async function handleSnipingGame() {
   } catch (err) {
     console.error('[AdSniper] Sniping game launch failed:', err);
     btn.disabled = false;
+  }
+}
+// ==========================================
+// PERSONAL ASSISTANT
+// ==========================================
+let astHistory = [];
+let astContextSize = 10;
+let astIsGenerating = false;
+
+async function initPersonalAssistant() {
+  const sendBtn = document.getElementById('ast-send-btn');
+  const input = document.getElementById('ast-input');
+  const historyInput = document.getElementById('ast-context-size');
+  
+  historyInput.addEventListener('change', (e) => {
+    let val = parseInt(e.target.value, 10);
+    if (isNaN(val) || val < 1) val = 1;
+    if (val > 50) val = 50;
+    astContextSize = val;
+    e.target.value = val;
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleAstSend();
+    }
+  });
+  
+  sendBtn.addEventListener('click', handleAstSend);
+
+  // Feature Buttons
+  document.getElementById('ast-btn-summarize').addEventListener('click', () => {
+    input.value = 'Please extract the clean readable content from this page and summarise it for me.';
+    handleAstSend();
+  });
+  document.getElementById('ast-btn-calc').addEventListener('click', () => {
+    input.value = 'Calculate: ';
+    input.focus();
+  });
+  document.getElementById('ast-btn-grammar').addEventListener('click', () => {
+    input.value = 'Fix the grammar in the following text: ';
+    input.focus();
+  });
+  document.getElementById('ast-btn-note').addEventListener('click', () => {
+    input.value = 'Save the following to my scratchpad: ';
+    input.focus();
+  });
+  document.getElementById('ast-btn-todo').addEventListener('click', () => {
+    input.value = 'Add the following to my todo list: ';
+    input.focus();
+  });
+}
+
+function appendAstMessage(role, text) {
+  const container = document.getElementById('ast-chat-history');
+  const div = document.createElement('div');
+  div.className = `ast-message ${role === 'user' ? 'user-msg' : 'bot-msg'}`;
+  div.innerHTML = formatAIOutput(text);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+async function handleAstSend() {
+  if (astIsGenerating) return;
+  const input = document.getElementById('ast-input');
+  const text = input.value.trim();
+  if (!text) return;
+  
+  input.value = '';
+  appendAstMessage('user', text);
+  
+  astIsGenerating = true;
+  document.getElementById('ast-send-btn').disabled = true;
+  
+  const botDiv = appendAstMessage('bot', '<em>Thinking...</em>');
+  
+  if (!window.GeminiNanoClient) {
+    botDiv.innerHTML = '<p style="color:var(--red);">AI Client not found.</p>';
+    astIsGenerating = false;
+    document.getElementById('ast-send-btn').disabled = false;
+    return;
+  }
+  
+  const client = window.GeminiNanoClient.getInstance();
+  const context = {
+    activeTabId,
+    activeTabUrl,
+    recentRequests: allRequests,
+  };
+  
+  // Truncate history
+  if (astHistory.length > astContextSize * 2) {
+    astHistory = astHistory.slice(-(astContextSize * 2));
+  }
+  
+  try {
+    const result = await client.processAssistantPrompt(text, astHistory, context, 
+      (tokenChunk) => {
+        botDiv.innerHTML = formatAIOutput(tokenChunk);
+        const container = document.getElementById('ast-chat-history');
+        container.scrollTop = container.scrollHeight;
+      },
+      (stats) => {
+        document.getElementById('ast-token-count').textContent = `${stats.tokensIn + stats.tokensOut} / ${stats.maxTokens}`;
+        document.getElementById('ast-speed').textContent = `${stats.speed} t/s`;
+      }
+    );
+    
+    botDiv.innerHTML = formatAIOutput(result.reply || 'Action completed.');
+    
+    astHistory.push({ role: 'user', content: text });
+    astHistory.push({ role: 'assistant', content: result.reply });
+    
+    // Check if this was a summarise request that extracted content
+    if (result.actionExecuted && result.actionExecuted.tool === 'tool_extract_clean_content' && result.actionExecuted.success) {
+      const content = result.actionExecuted.result?.content || result.actionExecuted.report;
+      if (content) {
+         const html = `<!DOCTYPE html><html><head><title>Cleaned Page</title><style>body{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:1rem;line-height:1.6;font-size:18px;color:#333;background:#f9f9f9;}</style></head><body><h1>Extracted Content</h1>${content.replace(/\n/g, '<br>')}</body></html>`;
+         const blob = new Blob([html], { type: 'text/html' });
+         const url = URL.createObjectURL(blob);
+         chrome.tabs.create({ url });
+      }
+    }
+  } catch (err) {
+    botDiv.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
+  }
+  
+  astIsGenerating = false;
+  document.getElementById('ast-send-btn').disabled = false;
+  const container = document.getElementById('ast-chat-history');
+  container.scrollTop = container.scrollHeight;
+}
+
+// ==========================================
+// LISTS PANEL (SCRATCHPAD & TODOS)
+// ==========================================
+let todos = [];
+
+async function initListsPanel() {
+  const scratchpad = document.getElementById('scratchpad-input');
+  const scratchClear = document.getElementById('scratchpad-clear');
+  const todoList = document.getElementById('todo-list');
+  const todoInput = document.getElementById('todo-input');
+  const todoAddBtn = document.getElementById('todo-add-btn');
+  const todoClear = document.getElementById('todo-clear');
+
+  // Load from storage
+  const stored = await chrome.storage.local.get(['astScratchpad', 'astTodos']);
+  if (stored.astScratchpad) {
+    scratchpad.value = stored.astScratchpad;
+  }
+  if (stored.astTodos && Array.isArray(stored.astTodos)) {
+    todos = stored.astTodos;
+  }
+  renderTodos();
+
+  // Scratchpad events
+  scratchpad.addEventListener('input', () => {
+    chrome.storage.local.set({ astScratchpad: scratchpad.value });
+  });
+  scratchClear.addEventListener('click', () => {
+    scratchpad.value = '';
+    chrome.storage.local.set({ astScratchpad: '' });
+  });
+
+  // Todo events
+  todoAddBtn.addEventListener('click', () => {
+    const text = todoInput.value.trim();
+    if (text) {
+      todos.push({ id: Date.now(), text, done: false });
+      chrome.storage.local.set({ astTodos: todos });
+      todoInput.value = '';
+      renderTodos();
+    }
+  });
+  todoInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') todoAddBtn.click();
+  });
+  todoClear.addEventListener('click', () => {
+    todos = todos.filter(t => !t.done);
+    chrome.storage.local.set({ astTodos: todos });
+    renderTodos();
+  });
+
+  // MCP Event Listeners
+  window.addEventListener('AST_SCRATCHPAD_UPDATE', (e) => {
+    const { content, append } = e.detail;
+    if (append && scratchpad.value) {
+      scratchpad.value += '\n\n' + content;
+    } else {
+      scratchpad.value = content;
+    }
+    chrome.storage.local.set({ astScratchpad: scratchpad.value });
+  });
+
+  window.addEventListener('AST_TODO_ADD', (e) => {
+    const { task } = e.detail;
+    if (task) {
+      todos.push({ id: Date.now(), text: task, done: false });
+      chrome.storage.local.set({ astTodos: todos });
+      renderTodos();
+    }
+  });
+
+  function renderTodos() {
+    todoList.innerHTML = '';
+    todos.forEach((todo, index) => {
+      const div = document.createElement('div');
+      div.className = 'todo-item ' + (todo.done ? 'done' : '');
+      
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = todo.done;
+      cb.addEventListener('change', () => {
+        todo.done = cb.checked;
+        chrome.storage.local.set({ astTodos: todos });
+        renderTodos();
+      });
+
+      const span = document.createElement('span');
+      span.textContent = todo.text;
+
+      const del = document.createElement('button');
+      del.className = 'todo-item-del';
+      del.textContent = 'x';
+      del.addEventListener('click', () => {
+        todos.splice(index, 1);
+        chrome.storage.local.set({ astTodos: todos });
+        renderTodos();
+      });
+
+      div.appendChild(cb);
+      div.appendChild(span);
+      div.appendChild(del);
+      todoList.appendChild(div);
+    });
   }
 }

@@ -10,7 +10,7 @@
 
 'use strict';
 
-const MAX_REQUESTS_PER_TAB = 200;
+const MAX_REQUESTS_PER_TAB = 100;
 const INITIAL_RULE_ID = 1001;
 
 // Source: Peter Lowe's ad-server list — plain text, one hostname per line, no headers
@@ -115,12 +115,39 @@ chrome.tabs.onCreated.addListener(async (newTab) => {
 // ---------------------------------------------------------------------------
 // 3. Block-count tracker — increments a storage counter every time a DNR rule fires
 //    Requires the declarativeNetRequestFeedback permission (already declared).
+//    Uses in-memory batch to avoid hammering storage on every single match.
 // ---------------------------------------------------------------------------
+const pendingBlockCounts = {};
+let blockCountFlushTimer = null;
+
+async function flushBlockCounts() {
+  blockCountFlushTimer = null;
+  const pending = Object.assign({}, pendingBlockCounts);
+  // Clear pending immediately so new events start a fresh batch
+  for (const k of Object.keys(pendingBlockCounts)) delete pendingBlockCounts[k];
+
+  if (Object.keys(pending).length === 0) return;
+
+  try {
+    const { blockCounts = {} } = await chrome.storage.local.get('blockCounts');
+    for (const ruleId of Object.keys(pending)) {
+      blockCounts[ruleId] = (blockCounts[ruleId] || 0) + pending[ruleId];
+    }
+    await chrome.storage.local.set({ blockCounts });
+  } catch (err) {
+    console.warn('[AdSniper] Failed to flush block counts:', err.message);
+  }
+}
+
 chrome.declarativeNetRequest.onRuleMatchedDebug.addListener(async (info) => {
-  // ── Increment per-rule block count ──
-  const key = `blockCount_${info.rule.ruleId}`;
-  const stored = await chrome.storage.local.get(key);
-  await chrome.storage.local.set({ [key]: (stored[key] || 0) + 1 });
+  // ── Batch-increment per-rule block count ──
+  const ruleId = String(info.rule.ruleId);
+  pendingBlockCounts[ruleId] = (pendingBlockCounts[ruleId] || 0) + 1;
+
+  // Flush to storage at most once every 5 seconds
+  if (!blockCountFlushTimer) {
+    blockCountFlushTimer = setTimeout(flushBlockCounts, 5000);
+  }
 
   // ── Notify content script to hide the matching DOM element ──
   const { domCleanupEnabled = true } = await chrome.storage.local.get('domCleanupEnabled');
@@ -181,7 +208,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ADD_BLOCK_RULE') {
     (async () => {
       try {
-        const { nextRuleId = 1001 } = await chrome.storage.local.get('nextRuleId');
+        let { nextRuleId = 1001 } = await chrome.storage.local.get('nextRuleId');
+        
+        // Auto-recover if storage got out of sync with DNR
+        const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+        const maxId = existingRules.reduce((max, r) => (r.id < 40000 && r.id > max ? r.id : max), 1000);
+        if (nextRuleId <= maxId) {
+          nextRuleId = maxId + 1;
+        }
+
         await chrome.declarativeNetRequest.updateDynamicRules({
           addRules: [{
             id: nextRuleId,
@@ -189,7 +224,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             action: { type: 'block' },
             condition: { urlFilter: message.pattern, resourceTypes: RESOURCE_TYPES_SW },
           }],
-          removeRuleIds: [],
+          removeRuleIds: [nextRuleId], // Safely remove just in case
         });
         await chrome.storage.local.set({ nextRuleId: nextRuleId + 1 });
 
@@ -406,6 +441,35 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (rules.length > 0) {
     await chrome.action.setBadgeText({ text: String(rules.length) });
     await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+  }
+
+  // ── Run storage cleanup for legacy keys and orphaned tabs ──
+  try {
+    const allStorage = await chrome.storage.local.get(null);
+    const keysToRemove = [];
+    const openTabs = await chrome.tabs.query({});
+    const openTabIds = new Set(openTabs.map(t => t.id));
+
+    for (const key of Object.keys(allStorage)) {
+      // 1. Remove legacy per-rule blockCount_ keys
+      if (key.startsWith('blockCount_')) {
+        keysToRemove.push(key);
+      }
+      // 2. Remove request logs for tabs that no longer exist
+      else if (key.startsWith('requests_')) {
+        const tabIdStr = key.replace('requests_', '');
+        if (tabIdStr !== 'global' && !openTabIds.has(Number(tabIdStr))) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      console.log(`[AdSniper] Storage cleanup: removed ${keysToRemove.length} stale/legacy keys.`);
+    }
+  } catch (err) {
+    console.warn('[AdSniper] Storage cleanup failed:', err);
   }
 });
 

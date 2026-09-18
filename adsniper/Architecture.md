@@ -111,7 +111,8 @@ GeminiNanoClient.getInstance()
                  ├── tool_hide_element_css ──────► Content: AI_HIDE_SELECTOR
                  ├── tool_extract_clean_content ──► Content: AI_EXTRACT_CONTENT
                  ├── tool_inspect_requests ──────► Storage: requests_{tabId} (Forensic Report)
-                 └── tool_toggle_feature ────────► Popup: toggleNewTabBlock / toggleMassBlock
+                 ├── tool_toggle_feature ────────► Popup: toggleNewTabBlock / toggleMassBlock
+                 └── tool_execute_js_script ─────► Content: AI_EXECUTE_SCRIPT (Executor, Verifier, Fixer)
 ```
 
 ### Element Picker Flow
@@ -370,10 +371,11 @@ You have access to the following MCP Actions:
 - tool_extract_clean_content(): Extracts clean readable text of the page without ads/sidebars.
 - tool_inspect_requests(category): Audits recent network requests captured on the tab.
 - tool_toggle_feature(feature, state): Toggles 'mass_block', 'new_tab_block', 'dom_cleanup', or 'iframe_blocker'.
+- tool_execute_js_script(code, description): Executes a small JavaScript script in the active browser tab to inspect, query, or extract custom DOM data (e.g. anchor links, floating boxes, popup fields, images, forms, tables). The code must return the extracted data (objects, arrays, strings, or numbers).
 
 Rules for executing tools:
 1. ONLY execute an action tool if the user's request explicitly matches one of the available tools above.
-2. If the user asks for general information, page questions, anchor links, text summaries, or anything outside of these specific tools, DO NOT call any tool. Answer the user directly and concisely in natural language.
+2. When the user asks to inspect, find, list, query, or extract specific data from the page (such as anchor links, floating elements, popups, fields, images, or custom DOM queries), use tool_execute_js_script with clean, safe JavaScript code that queries the DOM and returns the data.
 3. When an action IS appropriate, provide a concise explanation (1-2 sentences), followed immediately by an action block formatted exactly as:
 ```action
 {"tool": "tool_name", "args": {"arg1": "value"}}
@@ -408,6 +410,10 @@ To eliminate latency and prevent model non-compliance, natural language inputs a
 | `reader view / clean article / extract content` | `tool_extract_clean_content` | Extracts readability text without ads/sidebars |
 | `audit/inspect trackers / telemetry / network` | `tool_inspect_requests` | Compiles forensic network audit report |
 | `block <domain.com>` | `tool_add_block_rule` | Generates DNR rule `\|\|<domain.com>` |
+| `all anchor links / get links / list links` | `tool_execute_js_script` | Extracts all anchor links with text and URLs |
+| `floating boxes / popup fields / floating elements` | `tool_execute_js_script` | Detects fixed/sticky floating containers and popup boxes |
+| `all images / extract images` | `tool_execute_js_script` | Extracts images with dimensions and URLs |
+| `run js / eval / execute script` | `tool_execute_js_script` | Executes custom JS with Executor, Verifier & Fixer |
 
 If an intent matches, `executeMcpAction()` fires **immediately**. The UI displays an execution confirmation banner alongside the streaming response.
 
@@ -437,6 +443,7 @@ During streaming (`session.promptStreaming`), chunks containing raw action JSON 
 | `tool_extract_clean_content` | *none* | Dispatches `AI_EXTRACT_CONTENT` to content script. Traverses main article/content nodes, strips scripts/styles/ads, returns clean text and word count. |
 | `tool_inspect_requests` | `category` | Queries `chrome.storage.local.get('requests_{tabId}')` and `adHosts`. Compiles the forensic audit report with decoded query parameters. |
 | `tool_toggle_feature` | `feature`, `state` | Programmatically triggers `toggleNewTabBlock()`, `toggleMassBlock()`, or updates storage flags. |
+| `tool_execute_js_script` | `code`, `description` | Runs small JS programs in tab DOM context. Serves as Executor, Verifier, and Fixer (syntax repair, DOM node serialization, domain fallback heuristics, and Nano repair loops). Returns verified markdown tables and lists. |
 
 ---
 
@@ -629,3 +636,9 @@ case 'MY_TYPE':
 | `AI_REMOVE_OVERLAY` | Popup/AI → Content | content.js |
 | `AI_HIDE_SELECTOR { selector }` | Popup/AI → Content | content.js |
 | `AI_EXTRACT_CONTENT` | Popup/AI → Content | content.js |
+
+### Personal Assistant
+Added in v2.1, the Personal Assistant tab allows conversational interaction with the on-device Gemini Nano model, tracking prompt/response token sizes and maintaining an adjustable multi-turn conversation context.
+
+### Lists and Persistence
+The Lists feature relies on the \stScratchpad\ and \stTodos\ keys in \chrome.storage.local\. It exposes \AST_SCRATCHPAD_UPDATE\ and \AST_TODO_ADD\ DOM events so that the injected Gemini Nano MCP client can execute user commands that dynamically update the UI without manual refreshing.

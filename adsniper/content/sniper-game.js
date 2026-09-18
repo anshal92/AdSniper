@@ -76,6 +76,8 @@ window.AdSniperGame = (() => {
   let mouseX = 0, mouseY = 0;
   let animFrameId = null;
   let frameCount = 0;
+  let lastFrameTime = 0;
+  let loadingAngle = 0;
   let loadingProgress = 0;
   let loadingMessage = 'Scanning for ads...';
   let gameOverAlpha = 0; // Fade-in for game over screen
@@ -346,7 +348,8 @@ window.AdSniperGame = (() => {
       subtree: true,
     });
 
-    // Periodic check every 250ms to catch elements styled or unhidden via JS
+    // Periodic check every 1000ms to catch elements styled or unhidden via JS
+    // Relaxed from 250ms to 1000ms to eliminate recurring synchronous layout reflows during active gameplay
     if (!overlayCheckInterval) {
       overlayCheckInterval = setInterval(() => {
         const purged = purgeCoveringOverlays();
@@ -357,7 +360,7 @@ window.AdSniperGame = (() => {
             loadingPurgedAds.push(ad);
           }
         }
-      }, 250);
+      }, 1000);
     }
   }
 
@@ -417,6 +420,7 @@ window.AdSniperGame = (() => {
       a2: ZIGZAG_A2 * (0.6 + Math.random() * 0.8),
       f2: ZIGZAG_F2 * (0.7 + Math.random() * 0.6),
       phase: Math.random() * Math.PI * 2,
+      time: 0,
       points,
       alive: true,
       texture,
@@ -700,6 +704,7 @@ window.AdSniperGame = (() => {
         speed: BIRD_SPEED * (0.8 + Math.random() * 0.4),
         a1, f1, a2, f2,
         phase: Math.random() * Math.PI * 2,
+        time: 0,
         points,
         alive: true,
         texture,
@@ -787,7 +792,7 @@ window.AdSniperGame = (() => {
   //  PHYSICS ENGINE
   // ═══════════════════════════════════════════════
 
-  function updateBirds() {
+  function updateBirds(dt = 1) {
     const vw = canvas.width;
     const vh = canvas.height;
     const now = Date.now();
@@ -805,18 +810,19 @@ window.AdSniperGame = (() => {
       // Convert direction angle to radians
       let rad = (bird.directionAngle * Math.PI) / 180;
 
-      // Directional velocity with constant speed
-      const vx = Math.cos(rad) * bird.speed;
-      const vy = Math.sin(rad) * bird.speed;
+      // Directional velocity with constant speed (scaled by dt)
+      const vx = Math.cos(rad) * bird.speed * dt;
+      const vy = Math.sin(rad) * bird.speed * dt;
 
       // Normal (perpendicular) vector for zigzag flutter
       const nx = -Math.sin(rad);
       const ny = Math.cos(rad);
 
-      // Dual-component zigzag flutter velocity
-      const t = frameCount + bird.phase;
+      // Dual-component zigzag flutter velocity (scaled by dt)
+      bird.time = (bird.time || 0) + dt;
+      const t = bird.time + bird.phase;
       const zigzagVel = (bird.a1 * bird.f1 * Math.cos(bird.f1 * t) +
-                         bird.a2 * bird.f2 * Math.cos(bird.f2 * t)) * 0.5;
+                         bird.a2 * bird.f2 * Math.cos(bird.f2 * t)) * 0.5 * dt;
 
       bird.x += vx + nx * zigzagVel;
       bird.y += vy + ny * zigzagVel;
@@ -852,8 +858,8 @@ window.AdSniperGame = (() => {
       // Bird faces direction of flight
       bird.rotation = rad;
 
-      // Wing flap animation
-      bird.wingPhase += bird.wingSpeed;
+      // Wing flap animation (scaled by dt)
+      bird.wingPhase += bird.wingSpeed * dt;
     }
   }
 
@@ -889,16 +895,16 @@ window.AdSniperGame = (() => {
     });
   }
 
-  function updateParticles() {
+  function updateParticles(dt = 1) {
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
-      p.x += p.vx;
-      p.y += p.vy;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
       if (!p.isText) {
-        p.vy += 0.15; // Gravity
-        p.size *= 0.96;
+        p.vy += 0.15 * dt; // Gravity
+        p.size *= Math.pow(0.96, dt);
       }
-      p.life--;
+      p.life -= dt;
       if (p.life <= 0) particles.splice(i, 1);
     }
   }
@@ -961,11 +967,12 @@ window.AdSniperGame = (() => {
     });
   }
 
-  function updateFireworks(vw, vh, cx, cy) {
-    fireworkSpawnTimer++;
+  function updateFireworks(vw, vh, cx, cy, dt = 1) {
+    fireworkSpawnTimer += dt;
 
-    // Launch a firework burst every 24 frames
-    if (fireworkSpawnTimer % 24 === 0) {
+    // Launch a firework burst every ~24 frames (normalized)
+    if (fireworkSpawnTimer >= 24) {
+      fireworkSpawnTimer = 0;
       const zone = Math.random();
       let fx, fy;
       if (zone < 0.35 && cx > 300) {
@@ -986,12 +993,12 @@ window.AdSniperGame = (() => {
 
     for (let i = fireworks.length - 1; i >= 0; i--) {
       const f = fireworks[i];
-      f.x += f.vx;
-      f.y += f.vy;
-      f.vy += 0.08; // Gravity
-      f.vx *= 0.98; // Air drag
-      f.vy *= 0.98;
-      f.life--;
+      f.x += f.vx * dt;
+      f.y += f.vy * dt;
+      f.vy += 0.08 * dt; // Gravity
+      f.vx *= Math.pow(0.98, dt); // Air drag
+      f.vy *= Math.pow(0.98, dt);
+      f.life -= dt;
       if (f.life <= 0) fireworks.splice(i, 1);
     }
   }
@@ -1065,7 +1072,7 @@ window.AdSniperGame = (() => {
   //  RENDERER
   // ═══════════════════════════════════════════════
 
-  function render() {
+  function render(dt = 1) {
     const vw = canvas.width;
     const vh = canvas.height;
 
@@ -1073,7 +1080,7 @@ window.AdSniperGame = (() => {
     ctx.clearRect(0, 0, vw, vh);
 
     if (gameState === 'LOADING') {
-      renderLoadingScreen(vw, vh);
+      renderLoadingScreen(vw, vh, dt);
       return;
     }
 
@@ -1101,7 +1108,7 @@ window.AdSniperGame = (() => {
 
       // Game over overlay
       if (gameState === 'GAME_OVER') {
-        renderGameOver(vw, vh);
+        renderGameOver(vw, vh, dt);
       }
     }
   }
@@ -1233,7 +1240,7 @@ window.AdSniperGame = (() => {
     ctx.fillText('[ESC] Exit Game', vw - padding, cy);
   }
 
-  function renderLoadingScreen(vw, vh) {
+  function renderLoadingScreen(vw, vh, dt = 1) {
     // Full dark background
     ctx.fillStyle = 'rgba(15, 15, 23, 0.92)';
     ctx.fillRect(0, 0, vw, vh);
@@ -1241,11 +1248,11 @@ window.AdSniperGame = (() => {
     const cx = vw / 2;
     const cy = vh / 2;
 
-    // Spinning crosshair animation
-    const angle = frameCount * 0.05;
+    // Spinning crosshair animation (time-based)
+    loadingAngle += 0.05 * dt;
     ctx.save();
     ctx.translate(cx, cy - 60);
-    ctx.rotate(angle);
+    ctx.rotate(loadingAngle);
     ctx.strokeStyle = COLOR_GREEN;
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -1280,8 +1287,8 @@ window.AdSniperGame = (() => {
     ctx.fill();
   }
 
-  function renderGameOver(vw, vh) {
-    gameOverAlpha = Math.min(1, gameOverAlpha + 0.02);
+  function renderGameOver(vw, vh, dt = 1) {
+    gameOverAlpha = Math.min(1, gameOverAlpha + 0.02 * dt);
 
     const cx = vw / 2;
     const cy = vh / 2;
@@ -1435,35 +1442,49 @@ window.AdSniperGame = (() => {
   //  GAME LOOP
   // ═══════════════════════════════════════════════
 
-  function gameLoop() {
+  function gameLoop(timestamp) {
+    // Compute normalized delta-time (dt = 1.0 at 60 FPS / 16.667ms per frame)
+    let dt = 1.0;
+    if (typeof timestamp === 'number') {
+      if (lastFrameTime > 0) {
+        const elapsed = timestamp - lastFrameTime;
+        // Clamp dt between 0.1 and 3.0 to prevent physics breakdown on huge lags / background tab restore
+        dt = Math.min(Math.max(elapsed / 16.667, 0.1), 3.0);
+      }
+      lastFrameTime = timestamp;
+    }
     frameCount++;
 
-    // Ensure canvas stays full screen even if innerHeight was small during initial render
-    if (canvas && (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight)) {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+    // Ensure canvas stays full screen without thrashing on fractional Retina viewports
+    if (canvas) {
+      const targetW = Math.round(window.innerWidth);
+      const targetH = Math.round(window.innerHeight);
+      if (Math.abs(canvas.width - targetW) > 1 || Math.abs(canvas.height - targetH) > 1) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
     }
 
     if (gameState === 'PLAYING') {
-      updateBirds();
-      updateParticles();
+      updateBirds(dt);
+      updateParticles(dt);
 
       // Auto-decay combo
       if (combo > 0 && Date.now() - lastHitTime > COMBO_DECAY_MS) {
         combo = 0;
       }
     } else if (gameState === 'GAME_OVER') {
-      updateParticles();
+      updateParticles(dt);
       const totalShots = birdsHit + shotsMissed;
       const accuracy = totalShots > 0 ? Math.round((birdsHit / totalShots) * 100) : (totalBirds > 0 ? 0 : 100);
       if (accuracy > 80) {
         const vw = canvas ? canvas.width : window.innerWidth;
         const vh = canvas ? canvas.height : window.innerHeight;
-        updateFireworks(vw, vh, vw / 2, vh / 2);
+        updateFireworks(vw, vh, vw / 2, vh / 2, dt);
       }
     }
 
-    render();
+    render(dt);
     animFrameId = requestAnimationFrame(gameLoop);
   }
 
@@ -1577,8 +1598,8 @@ window.AdSniperGame = (() => {
 
   function onResize() {
     if (canvas) {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      canvas.width = Math.round(window.innerWidth);
+      canvas.height = Math.round(window.innerHeight);
     }
   }
 
@@ -1607,6 +1628,8 @@ window.AdSniperGame = (() => {
     fireworkSpawnTimer = 0;
     quitButtonBounds = { x: 0, y: 0, w: 0, h: 0 };
     frameCount = 0;
+    lastFrameTime = 0;
+    loadingAngle = 0;
     particles = [];
     gameOverAlpha = 0;
     loadingProgress = 0;
@@ -1630,11 +1653,11 @@ window.AdSniperGame = (() => {
       loadingPurgedAds.push(ad);
     }
 
-    // 5. Create full-screen canvas with MAXIMUM Z-INDEX
+    // 5. Create full-screen canvas with MAXIMUM Z-INDEX (integer rounded dimensions)
     canvas = document.createElement('canvas');
     canvas.id = 'adsniper-game-canvas';
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    canvas.width = Math.round(window.innerWidth);
+    canvas.height = Math.round(window.innerHeight);
     Object.assign(canvas.style, {
       position: 'fixed',
       top: '0',
@@ -1765,6 +1788,8 @@ window.AdSniperGame = (() => {
       cancelAnimationFrame(animFrameId);
       animFrameId = null;
     }
+    lastFrameTime = 0;
+    loadingAngle = 0;
 
     // Remove canvas
     if (canvas) {

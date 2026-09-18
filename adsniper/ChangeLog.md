@@ -4,6 +4,62 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ---
 
+## [2026-09-18] — Fix DNR Duplicate Rule ID Crashes & LanguageModel Output Language Warning
+
+### Fixed
+- **"Rule with id 50001/40001 does not have a unique ID" crash (`popup.js`)**:
+  - **Root Cause**: When toggling Mass-Block or New-Tab-Block ON, the code tried to remove stale rules using IDs stored in `chrome.storage.local`. If storage was out of sync with the actual DNR engine (e.g. after a game quit crash, extension reload, or partial failure), the stored IDs were stale/empty while the real DNR rules with those IDs still existed. Calling `updateDynamicRules({ addRules: [id:50001...], removeRuleIds: [] })` then threw "does not have a unique ID".
+  - **Fix**: Both `toggleMassBlock` and `toggleNewTabBlock` now query the actual DNR engine via `chrome.declarativeNetRequest.getDynamicRules()`, collect all rule IDs in their respective ranges (50001+ for mass-block, 40001–49999 for new-tab-block), and pass them as `removeRuleIds` in the same `updateDynamicRules` call. This guarantees no duplicate ID collision regardless of storage state.
+  - **Auto-Recovery**: If a "unique ID" error still occurs somehow, the catch block automatically wipes orphan rules from the DNR engine, resets storage flags, and prompts the user to retry — instead of showing a raw error dump.
+- **"No output language was specified in a LanguageModel API request" warning (`nano-client.js`)**:
+  - Chrome's LanguageModel API now requires `expectedOutputLanguage` in the `create()` options for optimal quality and safety attestation.
+  - Added `expectedOutputLanguage: 'en'` to all `lm.create()` calls (primary, systemPrompt-only fallback, and bare fallback).
+  - Also added `expectedOutputLanguage: 'en'` to `lm.availability()` check and the test session creation during `checkAvailability()` to fully suppress the warning on startup.
+- **"Resource::kQuotaBytes quota exceeded" error (`popup.js`, `service-worker.js`)**:
+  - **Root Cause**: `chrome.storage.local` has a strict size limit. AdSniper was storing hundreds of individual `blockCount_*` keys (one for every active DNR rule), along with up to 200 intercepted requests for every single tab opened by the user. If tabs were closed unexpectedly (e.g. Chrome crash), the request logs were never pruned, eventually filling up the local storage quota.
+  - **Fix**:
+    - **Manifest Permission**: Added `"unlimitedStorage"` to `manifest.json` to lift the hard quota limit.
+    - **Batched Storage Writes**: Consolidated the hundreds of individual `blockCount_*` keys into a single `blockCounts` object. The `service-worker.js` now uses an in-memory batching system that only flushes the block counts to storage once every 5 seconds, rather than hammering the storage API on every blocked request.
+    - **Storage Cleanup**: Added an automatic cleanup routine in `service-worker.js`'s `onInstalled`/startup hook that purges old legacy `blockCount_*` keys and cleans up `requests_*` arrays for tabs that no longer exist.
+    - **Lowered Overhead**: Reduced `MAX_REQUESTS_PER_TAB` from 200 to 100.
+    - **Error Handling**: Added a specific catch in `popup.js` for the `kQuotaBytes` error message that explicitly alerts the user to reload the extension (to apply the new `unlimitedStorage` permission and trigger the startup cleanup).
+
+---
+
+## [2026-09-04] — AI Prompt Persistence & JS Execution MCP Tool (Executor, Verifier, Fixer)
+
+### Added
+- **AI Prompt State Persistence Across Popup Sessions**:
+  - Added real-time draft saving for `#ai-prompt-input` to `chrome.storage.local` under the `aiPromptDraft` key via `input` listener.
+  - Automatically restores saved draft text whenever the extension popup or AI Assistant panel is opened.
+  - Clears persisted draft upon user submission (`handleAISend()`), preventing accidental draft loss on popup closing.
+- **JavaScript Execution MCP Tool (`tool_execute_js_script`)**:
+  - Registered `tool_execute_js_script(code, description)` in `DEFAULT_SYSTEM_PROMPT` for Gemini Nano.
+  - Built an end-to-end **Executor, Verifier, and Fixer** pipeline inside `adsniper/ai/nano-client.js`:
+    - **Executor**: Executes JS in the active tab DOM context via `AI_EXECUTE_SCRIPT` messaging (with `chrome.scripting.executeScript` fallback).
+    - **Verifier**: Inspects return structures, validates data integrity, and checks error states.
+    - **Auto-Fixer Triad**: Automatically repairs missing return statements or function enclosures (Phase 1), executes resilient domain-specific heuristic extractors for anchor links, floating boxes/popups, images, and form inputs if script execution fails or returns empty (Phase 2), and prompts Gemini Nano for self-healing repair if unhandled exceptions occur (Phase 3).
+    - **Report Formatter**: Formats tabular extraction results (links, coordinates, z-indices, tags, sources) into markdown tables for chat presentation.
+  - Added `AI_EXECUTE_SCRIPT` message handler and safe DOM evaluation in `adsniper/content/content.js` with comprehensive `serializeItem` to eliminate `DataCloneError` across Chrome extension messaging boundaries.
+  - Added quick prompt suggestion chips for `🔗 Anchor Links` and `🪟 Floating Boxes` in `adsniper/popup/popup.html`.
+
+### Fixed
+- **Raw JSON Action Leak & Script Execution on Anchor Link Queries**:
+  - **Root Cause**: When users ran queries like *"get all anchor link in page"*, Gemini Nano generated a script ending in `console.log(JSON.stringify(links, null, 2))` rather than an explicit `return`. Blindly wrapping statement blocks with `return (${code})` produced a `SyntaxError: Unexpected token 'const'`. When the fallback reply was processed, stripping the action JSON left an empty string, causing `cleanedReply || fullResponse` to leak the raw model tool call JSON directly into the chat response.
+  - **Resolved**:
+    - Enhanced `executeCustomDOMScript` in `adsniper/content/content.js` to intercept and capture `console.log` / `console.table` / `console.dir` calls, support multi-statement blocks without syntax errors, and auto-return declared variables.
+    - Updated `adsniper/ai/nano-client.js` `DEFAULT_SYSTEM_PROMPT` to instruct Gemini Nano that `tool_execute_js_script` must explicitly return data and not use `console.log`.
+    - Expanded `detectDirectIntent` to match singular and plural variations (`get all anchor link in page`, `anchor link`, `links in page`).
+    - Added safety guards in `nano-client.js` `processPrompt` so that raw JSON action blocks are never returned as chat text, falling back to the verified action report.
+- **Content Security Policy (CSP) 'unsafe-eval' Violation on Protected Pages**:
+  - **Root Cause**: On web pages enforcing strict Content Security Policies (disallowing `'unsafe-eval'`), executing dynamic JavaScript strings via `new Function(...)` is blocked by the browser engine with `Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script`.
+  - **Resolved**:
+    - Implemented a **Zero-Eval CSP-Safe DOM Query Engine** (`safeExecuteWithoutEval`) in `adsniper/content/content.js`.
+    - Parses and executes DOM query patterns (anchor links, floating elements, images, form inputs, and CSS selectors) natively using direct compiled browser APIs (`document.querySelectorAll`, `getAttribute`, `getComputedStyle`).
+    - Added automatic CSP violation detection and fallback in `executeCustomDOMScript` and `chrome.scripting.executeScript` fallback, enabling seamless DOM extraction on any webpage regardless of its Content Security Policy.
+
+---
+
 ## [2026-09-04] — System Prompt Settings Configuration & Intent Triggering Refinement
 
 ### Added
@@ -224,3 +280,27 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 - **Cookie Editor** — View, edit, lock (prevent page modification), delete cookies.
 - **Ad pattern fetch** — Peter Lowe's list on install; fallback: bundled `data/ad-patterns.json`.
 - **Manifest V3** scaffold — `declarativeNetRequest`, `webRequest` (observe-only), `cookies`, `storage`, `tabs`, `scripting`.
+## 2026-09-18
+- Fixed 'Rule does not have a unique ID' crash in ADD_BLOCK_RULE by syncing nextRuleId with existing DNR rule max.
+- Strengthened Gemini Nano Prompt API JSON action extraction regex to correctly parse LLM formatting hallucinations.
+- Restructured SYSTEM_PROMPT to severely restrict conversational outputs and force JSON blocks for actions.
+
+
+### Added
+- **Personal Assistant Tab**: A new tab beside 'Ad Blocker' powered by the local Gemini Nano LLM. It features conversational chat history, context size management, and real-time LLM telemetry (generation speed in tokens/sec, and token capacity utilization).
+- **Assistant Features Bar**: Added quick-access action chips for 'Summarise Page' (uses tool_extract_clean_content to fetch and display clean HTML in a new browser tab), 'Intent Finder', 'Calculator', 'Grammar Fixer', and 'Smart Reply'.
+- **processAssistantPrompt()**: Added dedicated streaming and execution pipeline in nano-client.js with \session.countPromptTokens()\ support.
+
+### Added
+- **Lists Tab**: A new tab for managing Notes (Scratchpad) and a Todo list.
+- **AI Integration**: The Personal Assistant can now read instructions and write directly to the user's Scratchpad or Todo list using the new \	ool_add_scratchpad\ and \	ool_add_todo\ MCP actions.
+- **Feature Chips**: Added 'Save Note' and 'Add Todo' quick-action chips in the Assistant UI.
+
+### Fixed
+- Fixed a ReferenceError crashing the extension popup on initialization caused by the Assistant/Lists scripts not being fully bundled.
+
+### Fixed
+- Fixed a syntax error in popup.js triggered by template literals breaking during the build process, preventing the popup from opening.
+
+### Fixed
+- Fixed an issue where the Personal Assistant only outputted 'Action completed.' for normal chat messages. The assistant now uses a dedicated conversation prompt instead of the strict adblocker prompt, allowing it to chat naturally.

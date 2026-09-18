@@ -136,6 +136,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: true, ...result });
       break;
     }
+
+    case 'AI_EXECUTE_SCRIPT': {
+      const response = executeCustomDOMScript(message.code);
+      sendResponse(response);
+      break;
+    }
   }
 
   return true; // Keep async message channel open
@@ -666,7 +672,7 @@ function removeIntrusiveOverlays() {
   candidates.forEach((el) => {
     try {
       const style = window.getComputedStyle(el);
-      const isFixed = style.position === 'fixed' || style.position === 'sticky';
+      const isFixed = style.position === 'fixed' || style.position === 'sticky' || style.position === 'absolute';
       const zIndex = parseInt(style.zIndex, 10);
       const isHighZ = !isNaN(zIndex) && zIndex >= 200;
 
@@ -674,9 +680,13 @@ function removeIntrusiveOverlays() {
         const text = el.innerText || '';
         const hasOverlayText = overlayKeywords.test(text) || overlayKeywords.test(el.className) || overlayKeywords.test(el.id);
         const coversScreen = el.offsetWidth > window.innerWidth * 0.5 && el.offsetHeight > window.innerHeight * 0.5;
+        const coversFull = el.offsetWidth >= window.innerWidth * 0.9 && el.offsetHeight >= window.innerHeight * 0.9;
         const hasFloatingVideo = !!(el.querySelector('video') || el.querySelector('iframe'));
+        
+        // Detect transparent click interceptors (popunders/new-tab traps)
+        const isTransparentTrap = coversFull && isHighZ && (parseFloat(style.opacity) <= 0.01 || style.backgroundColor === 'rgba(0, 0, 0, 0)' || style.backgroundColor === 'transparent');
 
-        if (hasOverlayText || (coversScreen && isHighZ && style.opacity > 0.3) || (isFixed && hasFloatingVideo && isHighZ)) {
+        if (hasOverlayText || (coversScreen && isHighZ && parseFloat(style.opacity) > 0.3) || (isFixed && hasFloatingVideo && isHighZ) || isTransparentTrap) {
           el.remove();
           removed++;
         }
@@ -726,3 +736,305 @@ function extractCleanArticleText() {
   const words = text ? text.split(/\s+/).length : 0;
   return { text: text.slice(0, 4000), wordCount: words };
 }
+
+/**
+ * Executes DOM queries safely without calling eval() or new Function().
+ * Completely immune to Content Security Policy (CSP) 'unsafe-eval' restrictions.
+ */
+function safeExecuteWithoutEval(code) {
+  if (!code || typeof code !== 'string') return null;
+  const clean = code.trim();
+  const lower = clean.toLowerCase();
+
+  // 1. Simple globals
+  if (/^document\.title\b/i.test(clean)) {
+    return document.title;
+  }
+  if (/^(window\.)?location\.href\b/i.test(clean)) {
+    return window.location ? window.location.href : '';
+  }
+
+  // 2. Pre-defined domain operations
+  // Anchor links
+  if (lower.includes('a[href]') || (lower.includes('anchor') && lower.includes('link')) || (lower.includes('queryselectorall') && lower.includes('href'))) {
+    return Array.from(document.querySelectorAll('a[href]'))
+      .map(a => ({
+        tag: 'a',
+        id: a.id || null,
+        className: (a.className && typeof a.className === 'string') ? a.className.slice(0, 80) : null,
+        text: (a.innerText || a.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120),
+        href: a.href || null,
+        target: a.target || '_self'
+      }))
+      .filter(a => a.href && !a.href.startsWith('javascript:'))
+      .slice(0, 100);
+  }
+
+  // Floating boxes, modals, popups
+  if (lower.includes('floating') || lower.includes('popup') || (lower.includes('modal') && lower.includes('queryselectorall'))) {
+    return Array.from(document.querySelectorAll('div, section, aside, dialog, [role="dialog"], [role="alertdialog"]'))
+      .filter(el => {
+        try {
+          const s = window.getComputedStyle(el);
+          const pos = s.position;
+          const z = parseInt(s.zIndex, 10);
+          const r = el.getBoundingClientRect();
+          return (pos === 'fixed' || pos === 'sticky' || (pos === 'absolute' && z > 100)) && r.width > 20 && r.height > 20 && s.display !== 'none' && s.visibility !== 'hidden';
+        } catch (e) { return false; }
+      })
+      .map(el => {
+        const r = el.getBoundingClientRect();
+        const s = window.getComputedStyle(el);
+        return {
+          tag: el.tagName.toLowerCase(),
+          id: el.id || null,
+          className: (el.className && typeof el.className === 'string') ? el.className.slice(0, 60) : null,
+          position: s.position,
+          zIndex: s.zIndex,
+          rect: { width: Math.round(r.width), height: Math.round(r.height), top: Math.round(r.top), left: Math.round(r.left) },
+          text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80)
+        };
+      })
+      .slice(0, 30);
+  }
+
+  // Images
+  if (lower.includes('img[src]') || (lower.includes('image') && lower.includes('queryselectorall'))) {
+    return Array.from(document.querySelectorAll('img[src]'))
+      .filter(img => img.naturalWidth > 15 && img.naturalHeight > 15)
+      .map(img => ({
+        tag: 'img',
+        src: img.src,
+        alt: img.alt || '',
+        dimensions: `${img.naturalWidth}x${img.naturalHeight}`
+      }))
+      .slice(0, 50);
+  }
+
+  // Form inputs
+  if (lower.includes('input') && lower.includes('queryselectorall')) {
+    return Array.from(document.querySelectorAll('input, select, textarea, button'))
+      .filter(el => {
+        try {
+          const s = window.getComputedStyle(el);
+          return s.display !== 'none' && s.visibility !== 'hidden';
+        } catch (e) { return false; }
+      })
+      .map(el => ({
+        tag: el.tagName.toLowerCase(),
+        type: el.type || null,
+        name: el.name || null,
+        id: el.id || null,
+        placeholder: el.placeholder || null,
+        value: el.value ? el.value.slice(0, 50) : null
+      }))
+      .slice(0, 50);
+  }
+
+  // 3. Generic querySelectorAll('selector') extraction
+  const qsaMatch = clean.match(/document\.querySelectorAll\(\s*(['"`])(.*?)\1\s*\)/i);
+  if (qsaMatch && qsaMatch[2]) {
+    const selector = qsaMatch[2];
+    try {
+      const elements = Array.from(document.querySelectorAll(selector));
+      return elements.slice(0, 100).map(el => {
+        const r = el.getBoundingClientRect ? el.getBoundingClientRect() : {};
+        const s = window.getComputedStyle ? window.getComputedStyle(el) : {};
+        return {
+          tag: el.tagName ? el.tagName.toLowerCase() : '',
+          id: el.id || null,
+          className: (el.className && typeof el.className === 'string') ? el.className.slice(0, 60) : null,
+          text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 150),
+          href: el.href || null,
+          src: el.src || null,
+          value: el.value || null,
+          rect: { width: Math.round(r.width || 0), height: Math.round(r.height || 0) }
+        };
+      });
+    } catch (e) {}
+  }
+
+  // 4. Generic querySelector('selector') extraction
+  const qsMatch = clean.match(/document\.querySelector\(\s*(['"`])(.*?)\1\s*\)/i);
+  if (qsMatch && qsMatch[2]) {
+    const selector = qsMatch[2];
+    try {
+      const el = document.querySelector(selector);
+      if (!el) return null;
+      return {
+        tag: el.tagName ? el.tagName.toLowerCase() : '',
+        id: el.id || null,
+        className: (el.className && typeof el.className === 'string') ? el.className.slice(0, 60) : null,
+        text: (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 200),
+        href: el.href || null,
+        src: el.src || null,
+        value: el.value || null,
+      };
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+/**
+ * Safely executes a JavaScript code string in the isolated DOM world,
+ * serializing any DOM nodes, NodeLists, or collections into clean JSON objects.
+ * Employs zero-eval execution to remain 100% compliant with strict page CSP.
+ */
+function executeCustomDOMScript(code) {
+  if (!code || typeof code !== 'string') {
+    return { success: false, error: 'No code provided' };
+  }
+
+  let cleanCode = code.trim();
+  // Strip markdown code block fences if present
+  if (cleanCode.startsWith('```')) {
+    cleanCode = cleanCode.replace(/^```(?:javascript|js)?\n?/, '').replace(/\n?```$/, '').trim();
+  }
+
+  // Priority 1: Check if code can be executed natively via Zero-Eval Engine (immune to CSP 'unsafe-eval')
+  const safeResult = safeExecuteWithoutEval(cleanCode);
+  if (safeResult !== null) {
+    const count = Array.isArray(safeResult) ? safeResult.length : (safeResult != null ? 1 : 0);
+    return { success: true, result: safeResult, count, safeEvaluated: true };
+  }
+
+  try {
+    // Intercept console.log/table/dir so scripts outputting via console (like LLM-generated code) are captured
+    const capturedLogs = [];
+    const mockConsole = {
+      log: (...args) => {
+        for (const arg of args) {
+          try {
+            if (typeof arg === 'string' && (arg.startsWith('[') || arg.startsWith('{'))) {
+              capturedLogs.push(JSON.parse(arg));
+            } else {
+              capturedLogs.push(arg);
+            }
+          } catch (e) {
+            capturedLogs.push(arg);
+          }
+        }
+      },
+      dir: (...args) => mockConsole.log(...args),
+      table: (...args) => mockConsole.log(...args),
+      warn: () => {},
+      error: () => {}
+    };
+
+    let raw;
+    let fn;
+    const hasReturn = /\breturn\b/.test(cleanCode);
+
+    if (!hasReturn) {
+      // 1. Try expression return: return (cleanCode)
+      try {
+        fn = new Function('console', `return (${cleanCode});`);
+        raw = fn(mockConsole);
+      } catch (exprErr) {
+        // 2. Expression wrapping failed (e.g. statement block, const/let declarations).
+        // Execute as statement body:
+        fn = new Function('console', cleanCode);
+        raw = fn(mockConsole);
+
+        // If raw is undefined, check if console.log captured data
+        if (raw === undefined && capturedLogs.length > 0) {
+          raw = capturedLogs.length === 1 ? capturedLogs[0] : capturedLogs;
+        }
+
+        // If still undefined, check if a variable was declared/assigned
+        if (raw === undefined) {
+          const varMatches = Array.from(cleanCode.matchAll(/(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=/g));
+          if (varMatches.length > 0) {
+            const lastVar = varMatches[varMatches.length - 1][1];
+            try {
+              const varFn = new Function('console', `${cleanCode};\nreturn ${lastVar};`);
+              raw = varFn(mockConsole);
+            } catch (e) {}
+          }
+        }
+      }
+    } else {
+      fn = new Function('console', cleanCode);
+      raw = fn(mockConsole);
+      if (raw === undefined && capturedLogs.length > 0) {
+        raw = capturedLogs.length === 1 ? capturedLogs[0] : capturedLogs;
+      }
+    }
+
+    // DOM Node serializer to prevent DataCloneError across message channels
+    const serializeItem = (item, depth = 0) => {
+      if (item == null) return item;
+      if (depth > 3) return String(item);
+
+      if (typeof Node !== 'undefined' && item instanceof Node) {
+        if (item.nodeType === Node.ELEMENT_NODE) {
+          const rect = item.getBoundingClientRect ? item.getBoundingClientRect() : {};
+          const style = window.getComputedStyle ? window.getComputedStyle(item) : {};
+          return {
+            tag: item.tagName.toLowerCase(),
+            id: item.id || null,
+            className: (item.className && typeof item.className === 'string') ? item.className.slice(0, 100) : null,
+            text: (item.innerText || item.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 150),
+            href: item.href || null,
+            src: item.src || null,
+            target: item.target || null,
+            position: style.position || null,
+            zIndex: style.zIndex || null,
+            display: style.display || null,
+            rect: {
+              width: Math.round(rect.width || 0),
+              height: Math.round(rect.height || 0),
+              top: Math.round(rect.top || 0),
+              left: Math.round(rect.left || 0)
+            }
+          };
+        }
+        return { nodeType: item.nodeType, text: (item.textContent || '').trim().slice(0, 100) };
+      }
+
+      if (Array.isArray(item)) {
+        return item.slice(0, 100).map((sub) => serializeItem(sub, depth + 1));
+      }
+
+      if (typeof item === 'object') {
+        try {
+          return JSON.parse(JSON.stringify(item));
+        } catch (e) {
+          const safe = {};
+          for (const k in item) {
+            if (typeof item[k] !== 'function' && typeof item[k] !== 'symbol') {
+              safe[k] = (typeof Node !== 'undefined' && item[k] instanceof Node)
+                ? serializeItem(item[k], depth + 1)
+                : (typeof item[k] === 'object' ? serializeItem(item[k], depth + 1) : item[k]);
+            }
+          }
+          return safe;
+        }
+      }
+
+      return item;
+    };
+
+    let result;
+    if (raw && typeof raw[Symbol.iterator] === 'function' && typeof raw !== 'string') {
+      result = Array.from(raw).slice(0, 100).map((el) => serializeItem(el));
+    } else {
+      result = serializeItem(raw);
+    }
+
+    const count = Array.isArray(result) ? result.length : (result != null ? 1 : 0);
+    return { success: true, result, count };
+  } catch (err) {
+    const isCspError = /unsafe-eval|content security policy|evalerror/i.test(err.message);
+    if (isCspError) {
+      const fallbackResult = safeExecuteWithoutEval(cleanCode);
+      if (fallbackResult !== null) {
+        const count = Array.isArray(fallbackResult) ? fallbackResult.length : (fallbackResult != null ? 1 : 0);
+        return { success: true, result: fallbackResult, count, safeEvaluated: true };
+      }
+    }
+    return { success: false, error: err.message, stack: err.stack };
+  }
+}
+

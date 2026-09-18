@@ -1,0 +1,1 @@
+const str = '`tool_inspect_requests{\"url\": \"https://manhuaus.com/\", \"max_results\": 10}`'; console.log('Cleaned: ' + str.replace(/(?:\{1,3})?\s*tool_[a-zA-Z0-9_]+\s*\{[\s\S]*?\}\s*(?:\{1,3})?/g, 'X'));

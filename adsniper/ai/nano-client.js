@@ -153,6 +153,20 @@ Rules for executing tools:
 \`\`\`
 4. NEVER recommend installing other extensions (e.g. uBlock Origin, AdBlock).`;
 
+  static ASSISTANT_SYSTEM_PROMPT = `You are an on-device Personal Assistant powered by Gemini Nano. You can chat naturally with the user, answer questions, summarize text, calculate math, and fix grammar.
+You ALSO have access to the following MCP Actions if explicitly requested:
+- tool_execute_js_script(code, description): Executes a JavaScript script in the active browser tab to inspect/extract DOM data. Must return the data.
+- tool_add_scratchpad(content, append): Saves text to the user's Scratchpad. If append is true, appends it; else replaces the pad.
+- tool_add_todo(task): Adds a new task to the user's Todo List.
+
+CRITICAL INSTRUCTIONS:
+1. ONLY execute a tool if the user explicitly asks to interact with the page, save a note, or add a todo.
+2. If the user just asks a question, calculation, or conversational prompt, answer them normally in text! Do NOT output a tool JSON.
+3. If you do need to execute a tool, output ONLY the tool JSON in a markdown block exactly like this:
+\`\`\`action
+{"tool": "tool_name", "args": {"arg_name": "value"}}
+\`\`\``;
+
   /**
    * Retrieves the active system prompt, honoring user-customized prompt from storage.
    * @returns {Promise<string>}
@@ -228,6 +242,48 @@ Rules for executing tools:
       return null;
     } finally {
       this.isInitializing = false;
+    }
+  }
+
+  /**
+   * Lazily creates or reuses the Assistant LanguageModel session.
+   * @returns {Promise<any>}
+   */
+  async getAssistantSession() {
+    if (this.assistantSession) return this.assistantSession;
+    if (this.isAssistantInitializing) {
+      while (this.isAssistantInitializing) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return this.assistantSession;
+    }
+
+    const lm = this.getLanguageModelAPI();
+    if (!lm) return null;
+
+    this.isAssistantInitializing = true;
+    try {
+      const createOptions = {
+        systemPrompt: GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT,
+        temperature: 0.7,
+        topK: 3,
+      };
+
+      try {
+        this.assistantSession = await lm.create(createOptions);
+      } catch (optErr) {
+        try {
+          this.assistantSession = await lm.create({ systemPrompt: GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT });
+        } catch (promptErr) {
+          this.assistantSession = await lm.create();
+        }
+      }
+      return this.assistantSession;
+    } catch (err) {
+      console.warn('[AdSniper AI] Assistant Session creation failed:', err);
+      return null;
+    } finally {
+      this.isAssistantInitializing = false;
     }
   }
 
@@ -632,7 +688,133 @@ Rules for executing tools:
    * @param {function} onToken - streaming callback (token) => void
    * @returns {Promise<{ reply: string, actionExecuted?: object }>}
    */
+
+  /**
+   * Processes a prompt for the Personal Assistant chat.
+   * Tracks token usage and processing speed.
+   */
+  async processAssistantPrompt(promptText, history, context, onToken = null, onStats = null) {
+    const trimmed = promptText.trim();
+    if (!trimmed) return { reply: 'Please enter a request.' };
+
+    const session = await this.getAssistantSession();
+    if (!session) {
+      return { reply: 'Personal Assistant requires Gemini Nano (Prompt API) to be available.' };
+    }
+
+    let fullPrompt = GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + '\n\n';
+    
+    if (context && context.activeTabUrl) {
+      fullPrompt += `[Current Tab URL: ${context.activeTabUrl}]\n\n`;
+    }
+
+    if (history && history.length > 0) {
+      fullPrompt += `[Conversation History]\n`;
+      for (const msg of history) {
+        fullPrompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
+      }
+      fullPrompt += `\n`;
+    }
+
+    fullPrompt += `User: ${trimmed}\nAssistant: `;
+
+    let tokenCount = 0;
+    try {
+      if (typeof session.countPromptTokens === 'function') {
+        tokenCount = await session.countPromptTokens(fullPrompt);
+      } else {
+        tokenCount = Math.ceil(fullPrompt.length / 4);
+      }
+    } catch (e) {
+      tokenCount = Math.ceil(fullPrompt.length / 4);
+    }
+
+    let fullResponse = '';
+    const startTime = performance.now();
+    let firstTokenTime = null;
+
+    try {
+      if (typeof session.promptStreaming === 'function' && onToken) {
+        const stream = session.promptStreaming(fullPrompt);
+        for await (const rawChunk of stream) {
+          if (!firstTokenTime) firstTokenTime = performance.now();
+          const chunk = typeof rawChunk === 'string' ? rawChunk : (rawChunk && rawChunk.text ? rawChunk.text : String(rawChunk || ''));
+          if (!chunk) continue;
+          
+          if (fullResponse && chunk.startsWith(fullResponse)) {
+            fullResponse = chunk;
+          } else if (fullResponse && chunk === fullResponse) {
+            continue;
+          } else {
+            fullResponse += chunk;
+          }
+
+          const displaySnippet = this.cleanActionFromReply(fullResponse);
+          if (displaySnippet) onToken(displaySnippet);
+        }
+      } else {
+        const rawRes = await session.prompt(fullPrompt);
+        fullResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
+        if (onToken) onToken(this.cleanActionFromReply(fullResponse));
+      }
+      
+      const endTime = performance.now();
+      const elapsedMs = endTime - (firstTokenTime || startTime);
+      const elapsedSec = Math.max(elapsedMs / 1000, 0.1);
+      
+      let outTokenCount = 0;
+      try {
+        if (typeof session.countPromptTokens === 'function') {
+          outTokenCount = await session.countPromptTokens(fullResponse);
+        } else {
+          outTokenCount = Math.ceil(fullResponse.length / 4);
+        }
+      } catch (e) {
+        outTokenCount = Math.ceil(fullResponse.length / 4);
+      }
+      
+      const speed = (outTokenCount / elapsedSec).toFixed(1);
+      if (onStats) {
+        onStats({
+          tokensIn: tokenCount,
+          tokensOut: outTokenCount,
+          speed: speed,
+          maxTokens: 32768
+        });
+      }
+
+      const parsedAction = this.extractActionJSON(fullResponse);
+      let actionResult = null;
+      if (parsedAction && parsedAction.tool) {
+        actionResult = await this.executeMcpAction(parsedAction.tool, parsedAction.args || {}, context);
+      }
+
+      let cleanedReply = this.cleanActionFromReply(fullResponse);
+      
+      if (actionResult && actionResult.success) {
+        if (!cleanedReply) {
+          cleanedReply = `✅ **Action Executed:** ${actionResult.message || actionResult.report || ''}`;
+        }
+      } else if (actionResult && !actionResult.success) {
+        if (!cleanedReply) {
+          cleanedReply = `❌ **Action Failed:** ${actionResult.error}`;
+        }
+      }
+
+      // If cleanActionFromReply completely empties the response but we didn't execute an action:
+      if (!cleanedReply && !actionResult) {
+        cleanedReply = fullResponse; // Fallback to raw response just in case
+      }
+
+      return { reply: cleanedReply || 'Action completed.', actionExecuted: actionResult };
+    } catch (err) {
+      console.error('[AdSniper AI] Personal Assistant error:', err);
+      return { reply: `Error: ${err.message}` };
+    }
+  }
+
   async processPrompt(promptText, context, onToken = null) {
+
     const trimmed = promptText.trim();
     if (!trimmed) return { reply: 'Please enter a request.' };
 
@@ -985,7 +1167,73 @@ Rules for executing tools:
         };
       }
 
+
+      case 'tool_execute_js_script': {
+        if (!args.code) return { success: false, error: 'No code provided' };
+        try {
+          if (!activeTabId) return { success: false, error: 'No active tab' };
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: activeTabId },
+            func: (codeStr) => {
+              try {
+                const result = new Function(codeStr)();
+                return { ok: true, data: result };
+              } catch (e) {
+                return { ok: false, error: e.message };
+              }
+            },
+            args: [args.code]
+          });
+          const res = results[0]?.result;
+          if (res && res.ok) {
+            let report = `### ⚡ JavaScript Browser Execution Report
+
+`;
+            report += `**Description:** ${args.description || 'DOM extraction/inspection'}
+`;
+            report += `**Script Executed:**
+\`\`\`javascript
+${args.code}
+\`\`\`
+
+`;
+            const dataStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2);
+            report += `**Result Returned:**
+\`\`\`json
+${dataStr}
+\`\`\``;
+            return { success: true, tool: toolName, report };
+          }
+          return { success: false, error: res?.error || 'Script returned no result' };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      }
+
+      case 'tool_add_scratchpad': {
+        try {
+          window.dispatchEvent(new CustomEvent('AST_SCRATCHPAD_UPDATE', { 
+            detail: { content: args.content, append: args.append !== false } 
+          }));
+          return { success: true, tool: toolName, message: 'Saved to Scratchpad.' };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      }
+
+      case 'tool_add_todo': {
+        try {
+          window.dispatchEvent(new CustomEvent('AST_TODO_ADD', { 
+            detail: { task: args.task } 
+          }));
+          return { success: true, tool: toolName, message: 'Added task to Todo list.' };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      }
+
       default:
+
         return { success: false, error: `Unknown tool: ${toolName}` };
     }
   }

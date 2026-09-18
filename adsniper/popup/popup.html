@@ -1241,6 +1241,246 @@
       background: var(--surface);
       border-top: 1px solid var(--border);
     }
+    /* ── ASSISTANT PANEL ── */
+    #panel-assistant {
+      display: none;
+      flex-direction: column;
+      height: calc(100vh - 85px);
+    }
+    #panel-assistant.active {
+      display: flex;
+    }
+    .assistant-stats-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 14px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .stat-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .ast-history-input {
+      width: 35px;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 4px;
+      font-size: 11px;
+    }
+    .assistant-features-bar {
+      display: flex;
+      gap: 6px;
+      padding: 8px 14px;
+      overflow-x: auto;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      scrollbar-width: none;
+    }
+    .assistant-features-bar::-webkit-scrollbar { display: none; }
+    .ast-feature-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-size: 11px;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .ast-feature-btn:hover { background: var(--surface2); }
+    .ast-chat-history {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--bg);
+    }
+    .ast-message {
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      max-width: 85%;
+      word-wrap: break-word;
+    }
+    .ast-message.user-msg {
+      background: var(--accent);
+      color: #fff;
+      align-self: flex-end;
+      border-bottom-right-radius: 2px;
+    }
+    .ast-message.bot-msg {
+      background: var(--surface2);
+      color: var(--text);
+      align-self: flex-start;
+      border-bottom-left-radius: 2px;
+    }
+    .ast-message.system-msg {
+      background: transparent;
+      color: var(--muted);
+      align-self: center;
+      text-align: center;
+      font-style: italic;
+      max-width: 100%;
+    }
+    .ast-input-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+    #ast-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      resize: none;
+      outline: none;
+    }
+    #ast-input:focus { border-color: var(--accent); }
+    .ast-send-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .ast-send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ── LISTS PANEL ── */
+    #panel-lists {
+      height: calc(100vh - 85px);
+    }
+    .lists-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: var(--bg);
+    }
+    .lists-half {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid var(--border);
+    }
+    .lists-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 14px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      color: var(--text);
+    }
+    .lists-icon-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      opacity: 0.6;
+    }
+    .lists-icon-btn:hover { opacity: 1; }
+    
+    .scratchpad-textarea {
+      flex: 1;
+      resize: none;
+      border: none;
+      padding: 10px 14px;
+      background: transparent;
+      color: var(--text);
+      font-family: inherit;
+      outline: none;
+      font-size: 12px;
+    }
+    
+    .todo-list-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .todo-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .todo-item.done span {
+      text-decoration: line-through;
+      color: var(--muted);
+    }
+    .todo-item input[type="checkbox"] {
+      cursor: pointer;
+    }
+    .todo-item span {
+      flex: 1;
+      word-wrap: break-word;
+    }
+    .todo-item-del {
+      background: transparent;
+      border: none;
+      color: var(--red);
+      cursor: pointer;
+      opacity: 0.5;
+    }
+    .todo-item-del:hover { opacity: 1; }
+    .todo-input-row {
+      display: flex;
+      gap: 6px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+    #todo-input {
+      flex: 1;
+      padding: 6px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      outline: none;
+    }
+    #todo-input:focus { border-color: var(--accent); }
+    #todo-add-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #todo-add-btn:hover { background: #2563eb; }
+
   </style>
 </head>
 <body>
@@ -1258,9 +1498,11 @@
   <div id="header-badge" class="header-badge"></div>
 </header>
 
-<!-- ── Tab Bar ──────────────────────────────────── -->
+<!--  Tab Bar  -->
 <nav class="tab-bar">
-  <button class="tab-btn active" data-tab="adblocker">🛡 Ad Blocker</button>
+  <button class="tab-btn active" data-tab="adblocker">🛡️ Ad Blocker</button>
+  <button class="tab-btn" data-tab="assistant">✨ Personal Assistant</button>
+  <button class="tab-btn" data-tab="lists">📋 Lists</button>
   <button class="tab-btn" data-tab="cookies">🍪 Cookie Editor</button>
 </nav>
 
@@ -1344,6 +1586,8 @@
       <div class="ai-hints-list">
         <span class="ai-hint-tag" data-prompt="Block all tracking and telemetry requests on this page">🚫 Block all trackers</span>
         <span class="ai-hint-tag" data-prompt="Remove anti-adblock modals, overlays, and restore scrolling">🧹 Remove overlays & paywalls</span>
+        <span class="ai-hint-tag" data-prompt="I need all anchor links from the page">🔗 Extract anchor links</span>
+        <span class="ai-hint-tag" data-prompt="Get all floating boxes and popup fields from the page">🪟 Find floating boxes & popups</span>
         <span class="ai-hint-tag" data-prompt="Hide floating videos and sticky promo banners on this page">👁️ Hide floating videos</span>
         <span class="ai-hint-tag" data-prompt="Extract clean readable article text without ads">📖 Clean reader view</span>
         <span class="ai-hint-tag" data-prompt="Audit all intercepted requests and highlight trackers">🔍 Audit network requests</span>
@@ -1353,6 +1597,8 @@
     <!-- Quick action chips -->
     <div class="ai-quick-chips">
       <button class="ai-chip" data-prompt="Audit trackers and network calls on this page">🎯 Audit Trackers</button>
+      <button class="ai-chip" data-prompt="I need all anchor links from the page">🔗 Anchor Links</button>
+      <button class="ai-chip" data-prompt="Get all floating boxes and popup fields from the page">🪟 Floating Boxes</button>
       <button class="ai-chip" data-prompt="Remove anti-adblock overlays and paywalls on this page">🧹 Kill Overlays</button>
       <button class="ai-chip" data-prompt="Extract clean readable article content without ads">📝 Reader View</button>
     </div>
@@ -1365,6 +1611,7 @@
           <p>Runs 100% on-device inside Chrome with zero cloud round-trips.</p>
           <ul>
             <li><strong>Smart Ad Blocking:</strong> Say <em>"Block all analytics on this tab"</em></li>
+            <li><strong>DOM Script MCP:</strong> Say <em>"I need all anchor links from the page"</em> or <em>"Get all floating boxes"</em></li>
             <li><strong>De-Clutter Page:</strong> Say <em>"Remove anti-adblock overlay"</em> or <em>"Hide sticky videos"</em></li>
             <li><strong>Readability & Audit:</strong> Say <em>"Extract clean article"</em> or <em>"Audit trackers"</em></li>
           </ul>
@@ -1418,6 +1665,71 @@
   </div>
   <div id="rules-list" class="list-container rules-container">
     <div class="empty">No rules active.</div>
+  </div>
+</div>
+
+<!-- PANEL: ASSISTANT -->
+<div id="panel-assistant" class="panel">
+  <div class="assistant-stats-bar">
+    <div class="stat-item" title="Tokens consumed (User Input + Context)">
+      <span class="stat-label">Tokens:</span>
+      <span id="ast-token-count">0 / 32768</span>
+    </div>
+    <div class="stat-item" title="Generation Speed">
+      <span class="stat-label">Speed:</span>
+      <span id="ast-speed">0 t/s</span>
+    </div>
+    <div class="stat-item" title="Conversation turns retained">
+      <span class="stat-label">History:</span>
+      <input type="number" id="ast-context-size" value="10" min="1" max="50" class="ast-history-input">
+    </div>
+  </div>
+
+  <div class="assistant-features-bar">
+    <button class="ast-feature-btn" id="ast-btn-summarize">📝 Summarise Page</button>
+    <button class="ast-feature-btn" id="ast-btn-calc">🧮 Calculator</button>
+    <button class="ast-feature-btn" id="ast-btn-grammar">✍️ Grammar Fixer</button>
+    <button class="ast-feature-btn" id="ast-btn-note">🗒️ Save Note</button>
+    <button class="ast-feature-btn" id="ast-btn-todo">✅ Add Todo</button>
+  </div>
+
+  <div id="ast-chat-history" class="ast-chat-history">
+    <div class="ast-message system-msg">Hello! I am your on-device Gemini Nano personal assistant.</div>
+  </div>
+
+  <div class="ast-input-container">
+    <textarea id="ast-input" rows="2" placeholder="Ask your personal assistant..."></textarea>
+    <button id="ast-send-btn" class="ast-send-btn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2.01 21L23 12L2.01 3L2 10L17 12L2 14L2.01 21Z" fill="currentColor"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<!-- PANEL: LISTS -->
+<div id="panel-lists" class="panel">
+  <div class="lists-container">
+    <div class="lists-half">
+      <div class="lists-header">
+        <span>📝 Scratchpad</span>
+        <button id="scratchpad-clear" class="lists-icon-btn">🗑️</button>
+      </div>
+      <textarea id="scratchpad-input" class="scratchpad-textarea" placeholder="Type notes or have the AI save them here..."></textarea>
+    </div>
+    <div class="lists-half">
+      <div class="lists-header">
+        <span>✅ Todo List</span>
+        <button id="todo-clear" class="lists-icon-btn">🗑️</button>
+      </div>
+      <div id="todo-list" class="todo-list-container">
+        <!-- Todo items will be injected here -->
+      </div>
+      <div class="todo-input-row">
+        <input type="text" id="todo-input" placeholder="Add a new task...">
+        <button id="todo-add-btn">Add</button>
+      </div>
+    </div>
   </div>
 </div>
 
