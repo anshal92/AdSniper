@@ -155,14 +155,16 @@ Rules for executing tools:
 
   static ASSISTANT_SYSTEM_PROMPT = `You are an on-device Personal Assistant powered by Gemini Nano. You can chat naturally with the user, answer questions, summarize text, calculate math, and fix grammar.
 You ALSO have access to the following MCP Actions if explicitly requested:
-- tool_execute_js_script(code, description): Executes a JavaScript script in the active browser tab to inspect/extract DOM data. Must return the data.
+- tool_extract_clean_content(): Extracts clean, readable article text from the current page. Use this for general reading, summarizing, or explaining what the page is about.
+- tool_execute_js_script(code, description): Executes a JavaScript script in the active browser tab to inspect/extract DOM data. Must return the data. Use this for specific DOM queries (e.g., getting links, counting specific words/elements, extracting images). Do NOT use for general reading.
 - tool_add_scratchpad(content, append): Saves text to the user's Scratchpad. If append is true, appends it; else replaces the pad.
 - tool_add_todo(task): Adds a new task to the user's Todo List.
 
 CRITICAL INSTRUCTIONS:
 1. ONLY execute a tool if the user explicitly asks to interact with the page, save a note, or add a todo.
 2. If the user just asks a question, calculation, or conversational prompt, answer them normally in text! Do NOT output a tool JSON.
-3. If you do need to execute a tool, output ONLY the tool JSON in a markdown block exactly like this:
+3. When the user asks to extract, read, or summarise page content, use tool_extract_clean_content. Do NOT use tool_execute_js_script for this.
+4. If you do need to execute a tool, output ONLY the tool JSON in a markdown block exactly like this:
 \`\`\`action
 {"tool": "tool_name", "args": {"arg_name": "value"}}
 \`\`\``;
@@ -374,6 +376,33 @@ CRITICAL INSTRUCTIONS:
         tool: 'tool_add_block_rule',
         args: { pattern: `||${blockMatch[1]}` },
         intentName: 'block_domain',
+      };
+    }
+
+    // 7. Anchor links extraction
+    if (
+      /\b(anchor|all)\s*(links?|hrefs?|urls?)/i.test(lower) ||
+      /\blinks?\s+from\s+(the\s+)?page/i.test(lower) ||
+      /\bextract\s+(anchor|all)?\s*links?/i.test(lower) ||
+      /\ba\[href\]/i.test(lower)
+    ) {
+      return {
+        tool: 'tool_extract_anchor_links',
+        args: {},
+        intentName: 'extract_anchor_links',
+      };
+    }
+
+    // 8. Floating boxes / popups extraction
+    if (
+      /\b(floating|sticky)\s*(box|element|div|banner|video|promo)/i.test(lower) ||
+      /\bfind\s+(floating|popup|modal)\s*(box|element|field|div)/i.test(lower) ||
+      /\bget\s+all\s+floating/i.test(lower)
+    ) {
+      return {
+        tool: 'tool_extract_floating_boxes',
+        args: {},
+        intentName: 'extract_floating_boxes',
       };
     }
 
@@ -791,9 +820,51 @@ CRITICAL INSTRUCTIONS:
 
       let cleanedReply = this.cleanActionFromReply(fullResponse);
       
+      // If the tool extracted text or raw JSON data, we need a second pass to synthesize it into a human-readable answer
+      const needsSynthesis = actionResult && actionResult.success && (
+        (actionResult.tool === 'tool_extract_clean_content' && actionResult.text) ||
+        (actionResult.tool === 'tool_execute_js_script' && actionResult.report)
+      );
+
+      if (needsSynthesis) {
+        if (onToken) onToken(`✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n*Synthesizing answer...*`);
+        
+        try {
+          const extractedData = actionResult.text ? actionResult.text : actionResult.report;
+          const summaryPrompt = `${fullPrompt}${fullResponse}\n\n[SYSTEM]: Action successful. Extracted data:\n"""\n${extractedData.slice(0, 8000)}\n"""\nPlease provide the requested answer based on this data. If the data contains links or specific values, list them exactly as they appear in the data. Do NOT output any JSON tool actions. Answer directly in markdown.`;
+          
+          let summaryResponse = '';
+          if (typeof session.promptStreaming === 'function' && onToken) {
+            const stream2 = session.promptStreaming(summaryPrompt);
+            for await (const rawChunk of stream2) {
+              const chunk = typeof rawChunk === 'string' ? rawChunk : (rawChunk && rawChunk.text ? rawChunk.text : String(rawChunk || ''));
+              if (!chunk) continue;
+              if (summaryResponse && chunk.startsWith(summaryResponse)) {
+                summaryResponse = chunk;
+              } else if (summaryResponse && chunk === summaryResponse) {
+                continue;
+              } else {
+                summaryResponse += chunk;
+              }
+              const displaySnippet = this.cleanActionFromReply(summaryResponse);
+              if (displaySnippet) onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${displaySnippet}`);
+            }
+          } else {
+            const rawRes = await session.prompt(summaryPrompt);
+            summaryResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
+          }
+          cleanedReply = `✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n${this.cleanActionFromReply(summaryResponse)}`;
+          return { reply: cleanedReply, actionExecuted: actionResult };
+        } catch (err) {
+          console.warn('[AdSniper AI] Second pass summarization failed:', err);
+        }
+      }
+
       if (actionResult && actionResult.success) {
         if (!cleanedReply) {
           cleanedReply = `✅ **Action Executed:** ${actionResult.message || actionResult.report || ''}`;
+        } else if (!cleanedReply.toLowerCase().includes('executed') && !cleanedReply.toLowerCase().includes('removed') && !cleanedReply.toLowerCase().includes('activated') && !cleanedReply.toLowerCase().includes('cleared')) {
+          cleanedReply = `✅ **Action Executed:** ${actionResult.message}\n\n${cleanedReply}`;
         }
       } else if (actionResult && !actionResult.success) {
         if (!cleanedReply) {
@@ -825,8 +896,8 @@ CRITICAL INSTRUCTIONS:
     if (directIntent) {
       preExecutedAction = await this.executeMcpAction(directIntent.tool, directIntent.args, context);
 
-      // If user requested audit / inspect requests, return the forensic report immediately
-      if (directIntent.intentName === 'inspect_requests' && preExecutedAction.report) {
+      // If the action produced a detailed report (anchor links, audit, floating boxes, etc.), return immediately
+      if (preExecutedAction.report) {
         const reply = preExecutedAction.report;
         if (onToken) onToken(reply);
         return { reply, actionExecuted: preExecutedAction };
@@ -908,8 +979,8 @@ CRITICAL INSTRUCTIONS:
           }
         }
 
-        // If action was tool_inspect_requests, use its detailed report!
-        if (actionResult && actionResult.tool === 'tool_inspect_requests' && actionResult.report) {
+        // If the action returned a detailed report (e.g. tool_inspect_requests or tool_execute_js_script), use it!
+        if (actionResult && actionResult.report) {
           return { reply: actionResult.report, actionExecuted: actionResult };
         }
 
@@ -919,7 +990,7 @@ CRITICAL INSTRUCTIONS:
           const fallbackIntent = this.detectDirectIntent(trimmed);
           if (fallbackIntent) {
             actionResult = await this.executeMcpAction(fallbackIntent.tool, fallbackIntent.args, context);
-            if (actionResult.tool === 'tool_inspect_requests' && actionResult.report) {
+            if (actionResult.report) {
               return { reply: actionResult.report, actionExecuted: actionResult };
             }
           }
@@ -1053,6 +1124,9 @@ CRITICAL INSTRUCTIONS:
           if (sendFn) {
             const resp = await sendFn({ type: 'AI_HIDE_SELECTOR', selector: args.selector });
             count = (resp && resp.count) ? resp.count : 0;
+          } else if (activeTabId) {
+            const resp = await chrome.tabs.sendMessage(activeTabId, { type: 'AI_HIDE_SELECTOR', selector: args.selector });
+            count = (resp && resp.count) ? resp.count : 0;
           }
           return {
             success: true,
@@ -1075,6 +1149,10 @@ CRITICAL INSTRUCTIONS:
             const resp = await sendFn({ type: 'AI_EXTRACT_CONTENT' });
             text = (resp && resp.text) ? resp.text : '';
             words = (resp && resp.wordCount) ? resp.wordCount : 0;
+          } else if (activeTabId) {
+            const resp = await chrome.tabs.sendMessage(activeTabId, { type: 'AI_EXTRACT_CONTENT' });
+            text = (resp && resp.text) ? resp.text : '';
+            words = (resp && resp.wordCount) ? resp.wordCount : 0;
           }
           return {
             success: true,
@@ -1082,6 +1160,92 @@ CRITICAL INSTRUCTIONS:
             text: text,
             wordCount: words,
             message: `Extracted ${words} words of clean content`,
+          };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      }
+
+      case 'tool_extract_anchor_links': {
+        try {
+          const sendFn = (typeof sendToTab === 'function') ? sendToTab : (typeof window !== 'undefined' && typeof window.sendToTab === 'function' ? window.sendToTab : null);
+          let links = [];
+          const msg = { type: 'AI_EXECUTE_SCRIPT', code: 'document.querySelectorAll("a[href]")' };
+          if (sendFn) {
+            const resp = await sendFn(msg);
+            links = (resp && resp.success && resp.result) ? resp.result : (resp && resp.result) ? resp.result : [];
+          } else if (activeTabId) {
+            const resp = await chrome.tabs.sendMessage(activeTabId, msg);
+            links = (resp && resp.success && resp.result) ? resp.result : (resp && resp.result) ? resp.result : [];
+          }
+          if (!Array.isArray(links)) links = [];
+          const total = links.length;
+          const displayMax = 100;
+          const showing = links.slice(0, displayMax);
+
+          let report = `### 🔗 Anchor Links Extracted (${total} found)\n\n`;
+          report += `| # | Text | URL | Target |\n`;
+          report += `|---|------|-----|--------|\n`;
+          showing.forEach(function(link, i) {
+            const txt = (link.text || '(no text)').slice(0, 60).replace(/\|/g, '/');
+            const href = (link.href || '').slice(0, 80).replace(/\|/g, '%7C');
+            const tgt = link.target || '_self';
+            report += '| ' + (i + 1) + ' | ' + txt + ' | ' + href + ' | ' + tgt + ' |\n';
+          });
+
+          if (total > displayMax) {
+            report += '\n*Showing first ' + displayMax + ' of ' + total + ' links. Click **Download All** below for the complete list.*\n';
+          }
+
+          return {
+            success: true,
+            tool: toolName,
+            report: report,
+            allLinks: links,
+            totalCount: total,
+            message: 'Extracted ' + total + ' anchor links from page',
+          };
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+      }
+
+      case 'tool_extract_floating_boxes': {
+        try {
+          const sendFn = (typeof sendToTab === 'function') ? sendToTab : (typeof window !== 'undefined' && typeof window.sendToTab === 'function' ? window.sendToTab : null);
+          let boxes = [];
+          const msg = { type: 'AI_EXECUTE_SCRIPT', code: 'document.querySelectorAll("floating popup modal")' };
+          if (sendFn) {
+            const resp = await sendFn(msg);
+            boxes = (resp && resp.success && resp.result) ? resp.result : (resp && resp.result) ? resp.result : [];
+          } else if (activeTabId) {
+            const resp = await chrome.tabs.sendMessage(activeTabId, msg);
+            boxes = (resp && resp.success && resp.result) ? resp.result : (resp && resp.result) ? resp.result : [];
+          }
+          if (!Array.isArray(boxes)) boxes = [];
+
+          let report = '### 🪟 Floating Elements Detected (' + boxes.length + ' found)\n\n';
+          if (boxes.length === 0) {
+            report += 'No floating, sticky, or modal elements detected on this page.';
+          } else {
+            report += '| # | Tag | Position | Z-Index | Size | Text |\n';
+            report += '|---|-----|----------|---------|------|------|\n';
+            boxes.forEach(function(box, i) {
+              var tag = box.tag || '?';
+              var pos = box.position || '?';
+              var z = box.zIndex || '?';
+              var size = box.rect ? (box.rect.width + 'x' + box.rect.height) : '?';
+              var txt = (box.text || '').slice(0, 50).replace(/\|/g, '/');
+              report += '| ' + (i + 1) + ' | ' + tag + ' | ' + pos + ' | ' + z + ' | ' + size + ' | ' + txt + ' |\n';
+            });
+          }
+
+          return {
+            success: true,
+            tool: toolName,
+            report: report,
+            totalCount: boxes.length,
+            message: 'Detected ' + boxes.length + ' floating elements on page',
           };
         } catch (err) {
           return { success: false, error: err.message };
@@ -1179,33 +1343,60 @@ CRITICAL INSTRUCTIONS:
                 const result = new Function(codeStr)();
                 return { ok: true, data: result };
               } catch (e) {
+                // Check if this is a CSP violation
+                if (e.message && (e.message.indexOf('Content Security Policy') !== -1 || e.message.indexOf('unsafe-eval') !== -1)) {
+                  return { ok: false, error: 'CSP_BLOCKED', message: e.message };
+                }
                 return { ok: false, error: e.message };
               }
             },
             args: [args.code]
           });
-          const res = results[0]?.result;
+          const res = results && results[0] ? results[0].result : null;
           if (res && res.ok) {
-            let report = `### ⚡ JavaScript Browser Execution Report
-
-`;
-            report += `**Description:** ${args.description || 'DOM extraction/inspection'}
-`;
-            report += `**Script Executed:**
-\`\`\`javascript
-${args.code}
-\`\`\`
-
-`;
+            let report = `### ⚡ JavaScript Browser Execution Report\n\n`;
+            report += `**Description:** ${args.description || 'DOM extraction/inspection'}\n`;
+            report += `**Script Executed:**\n\`\`\`javascript\n${args.code}\n\`\`\`\n\n`;
             const dataStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2);
-            report += `**Result Returned:**
-\`\`\`json
-${dataStr}
-\`\`\``;
+            report += `**Result Returned:**\n\`\`\`json\n${dataStr}\n\`\`\``;
             return { success: true, tool: toolName, report };
           }
-          return { success: false, error: res?.error || 'Script returned no result' };
+          // CSP blocked - fall back to content script message handler
+          if (res && res.error === 'CSP_BLOCKED') {
+            try {
+              const csResp = await chrome.tabs.sendMessage(activeTabId, {
+                type: 'AI_EXECUTE_SCRIPT',
+                code: args.code
+              });
+              if (csResp && (csResp.ok || csResp.success)) {
+                const actualData = csResp.data !== undefined ? csResp.data : csResp.result;
+                const dataStr = typeof actualData === 'string' ? actualData : JSON.stringify(actualData, null, 2);
+                return { success: true, tool: toolName, report: `### 🛠️ DOM Query Result (CSP-Safe)\n\n\`\`\`json\n${dataStr}\n\`\`\`` };
+              }
+              return { success: false, error: (csResp && csResp.error) ? csResp.error : 'Content script execution failed' };
+            } catch (csErr) {
+              return { success: false, error: 'CSP blocks eval on this page and content script fallback failed: ' + csErr.message };
+            }
+          }
+          return { success: false, error: (res && res.error) ? res.error : 'Script returned no result' };
         } catch (e) {
+          // Top-level CSP error from chrome.scripting.executeScript itself
+          if (e.message && (e.message.indexOf('Content Security Policy') !== -1 || e.message.indexOf('unsafe-eval') !== -1)) {
+            try {
+              const csResp = await chrome.tabs.sendMessage(activeTabId, {
+                type: 'AI_EXECUTE_SCRIPT',
+                code: args.code
+              });
+              if (csResp && (csResp.ok || csResp.success)) {
+                const actualData = csResp.data !== undefined ? csResp.data : csResp.result;
+                const dataStr = typeof actualData === 'string' ? actualData : JSON.stringify(actualData, null, 2);
+                return { success: true, tool: toolName, report: `### 🛠️ DOM Query Result (CSP-Safe)\n\n\`\`\`json\n${dataStr}\n\`\`\`` };
+              }
+              return { success: false, error: (csResp && csResp.error) ? csResp.error : 'Content script execution failed' };
+            } catch (csErr) {
+              return { success: false, error: 'CSP blocks eval on this page: ' + e.message };
+            }
+          }
           return { success: false, error: e.message };
         }
       }

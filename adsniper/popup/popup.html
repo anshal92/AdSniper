@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AdSniper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -30,6 +33,23 @@
       font-size: 12px;
       background: var(--bg);
       color: var(--text);
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--surface);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--muted);
     }
 
     /* ═══════════════════════════════════════
@@ -1306,6 +1326,7 @@
       background: var(--bg);
     }
     .ast-message {
+      font-family: 'JetBrains Mono', monospace;
       padding: 8px 12px;
       border-radius: 8px;
       font-size: 12px;
@@ -1332,6 +1353,30 @@
       text-align: center;
       font-style: italic;
       max-width: 100%;
+    }
+    .ast-thinking-anim {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--accent);
+      font-size: 12px;
+    }
+    .ast-thinking-anim em {
+      animation: astFadeWord 0.8s ease-out;
+    }
+    .brain-buzz {
+      display: inline-block;
+      font-size: 16px;
+      animation: brainBuzz 0.3s ease-in-out infinite alternate;
+    }
+    @keyframes brainBuzz {
+      0%   { transform: rotate(-4deg) scale(1); }
+      50%  { transform: rotate(4deg) scale(1.08); }
+      100% { transform: rotate(-2deg) scale(1.02); }
+    }
+    @keyframes astFadeWord {
+      0%   { opacity: 0; transform: translateY(4px); }
+      100% { opacity: 1; transform: translateY(0); }
     }
     .ast-input-container {
       display: flex;

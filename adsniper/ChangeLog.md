@@ -304,3 +304,22 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ### Fixed
 - Fixed an issue where the Personal Assistant only outputted 'Action completed.' for normal chat messages. The assistant now uses a dedicated conversation prompt instead of the strict adblocker prompt, allowing it to chat naturally.
+
+### Fixed
+- Fixed a CSP `unsafe-eval` error preventing the Personal Assistant from extracting page text. The assistant now falls back to a custom Zero-Eval Engine in the content script when chrome.scripting.executeScript is blocked by strict Content Security Policies.
+- Added a second pass LLM synthesis loop for the Personal Assistant to natively summarize text extracted via 	ool_extract_clean_content.
+- Fixed an issue in the Ad Blocker tab where 	ool_execute_js_script output (like anchor link tables) was silently dropped, rendering as 'Action completed'. The .report payload is now correctly displayed in the UI.
+
+### Fixed
+- Fixed 'Extract anchor links' chip in the Ad Blocker tab. Previously, the LLM incorrectly called `tool_extract_clean_content` instead of extracting links. Added `tool_extract_anchor_links` and `tool_extract_floating_boxes` as direct-intent tools that bypass the LLM entirely, executing DOM queries via the content script and returning rich Markdown table reports.
+- Anchor link extraction now shows at most 100 links in the table. When >100 are found, a 'Download All' button appears in the action card to save the full list as a .txt file.
+
+### Added
+- **Thinking Animation**: Replaced the static 'Thinking...' text in the Personal Assistant with an animated word-cycling indicator. 69 synonyms of 'thinking' (Pondering, Contemplating, Musing, etc.) cycle every 600ms with a buzzing brain emoji animation. Starting word is randomized for variety.
+
+### Fixed
+- Fixed an issue in the Personal Assistant where DOM queries (via \	ool_execute_js_script\) dumped raw JSON blocks instead of human-readable text. Enabled the second-pass synthesis engine to process \	ool_execute_js_script\ outputs so the AI can read the JSON and answer naturally.
+
+### Fixed
+- Tuned the Personal Assistant prompt to correctly prioritize \	ool_execute_js_script\ for counting specific words or extracting specific elements, rather than defaulting to full-page summarization.
+- Added explicit instructions to the second-pass synthesizer to extract exact URLs and values from JSON output to prevent the AI from hallucinating missing data.

@@ -953,7 +953,7 @@ async function handleAISend(overridePrompt) {
   if (input) input.value = '';
   sendBtn.disabled = true;
   actionCard.style.display = 'none';
-  responseText.innerHTML = '<p style="color:var(--accent);"><em>Thinking with on-device AI…</em></p>';
+  startThinkingAnimation(responseText);
 
   try {
     const client = window.GeminiNanoClient.getInstance();
@@ -965,10 +965,12 @@ async function handleAISend(overridePrompt) {
 
     const result = await client.processPrompt(prompt, context, (tokenChunk) => {
       // Live streaming update with formatting
+      stopThinkingAnimation();
       responseText.innerHTML = formatAIOutput(tokenChunk);
       responseBox.scrollTop = responseBox.scrollHeight;
     });
 
+    stopThinkingAnimation();
     responseText.innerHTML = formatAIOutput(result.reply || 'Action executed.');
     responseBox.scrollTop = responseBox.scrollHeight;
 
@@ -978,6 +980,27 @@ async function handleAISend(overridePrompt) {
       const cardText = `⚡ ${action.message || 'Action executed'}`;
 
       actionCard.innerHTML = `<span>${cardText}</span>`;
+
+      // Add download button for anchor links when there are more than 100
+      if (action.tool === 'tool_extract_anchor_links' && action.allLinks && action.totalCount > 100) {
+        const dlBtn = document.createElement('button');
+        dlBtn.textContent = '📥 Download All (' + action.totalCount + ' links)';
+        dlBtn.style.cssText = 'margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:11px;white-space:nowrap;';
+        dlBtn.addEventListener('click', function() {
+          var lines = action.allLinks.map(function(link, i) {
+            return (i + 1) + '. ' + (link.text || '(no text)') + ' | ' + (link.href || '') + ' | target=' + (link.target || '_self');
+          });
+          var content = 'Anchor Links Extracted (' + action.totalCount + ' total)\n' + '='.repeat(50) + '\n\n' + lines.join('\n');
+          var blob = new Blob([content], { type: 'text/plain' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'anchor-links-' + Date.now() + '.txt';
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+        actionCard.appendChild(dlBtn);
+      }
 
       // If a rule was added or feature toggled, sync UI and refresh
       if (action.tool === 'tool_add_block_rule') {
@@ -999,6 +1022,7 @@ async function handleAISend(overridePrompt) {
     console.error('[AdSniper AI] Error processing request:', err);
     responseText.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
   } finally {
+    stopThinkingAnimation();
     sendBtn.disabled = false;
   }
 }
@@ -1479,6 +1503,43 @@ async function handleSnipingGame() {
 let astHistory = [];
 let astContextSize = 10;
 let astIsGenerating = false;
+let astThinkingTimer = null;
+
+const AST_THINKING_WORDS = [
+  'Thinking', 'Pondering', 'Contemplating', 'Musing', 'Reasoning',
+  'Deliberating', 'Reflecting', 'Analyzing', 'Processing', 'Cogitating',
+  'Ruminating', 'Brainstorming', 'Mulling', 'Evaluating', 'Computing',
+  'Deducing', 'Inferring', 'Synthesizing', 'Deciphering', 'Interpreting',
+  'Formulating', 'Weighing', 'Considering', 'Examining', 'Probing',
+  'Scrutinizing', 'Investigating', 'Exploring', 'Unraveling', 'Decoding',
+  'Calibrating', 'Crunching', 'Distilling', 'Parsing', 'Mapping',
+  'Connecting', 'Correlating', 'Hypothesizing', 'Theorizing', 'Conjuring',
+  'Brewing', 'Churning', 'Sparking', 'Ideating', 'Envisioning',
+  'Imagining', 'Devising', 'Scheming', 'Plotting', 'Architecting',
+  'Assembling', 'Composing', 'Crafting', 'Weaving', 'Channeling',
+  'Meditating', 'Concentrating', 'Focusing', 'Absorbing', 'Digesting',
+  'Simmering', 'Percolating', 'Gestating', 'Incubating', 'Marinating',
+  'Crystallizing', 'Resolving', 'Untangling', 'Harmonizing'
+];
+
+function startThinkingAnimation(targetDiv) {
+  let idx = Math.floor(Math.random() * AST_THINKING_WORDS.length);
+  if (astThinkingTimer) clearInterval(astThinkingTimer);
+  function render() {
+    var word = AST_THINKING_WORDS[idx % AST_THINKING_WORDS.length];
+    targetDiv.innerHTML = '<div class="ast-thinking-anim"><span class="brain-buzz">🧠</span> <em>' + word + '...</em></div>';
+    idx++;
+  }
+  render();
+  astThinkingTimer = setInterval(render, 1200);
+}
+
+function stopThinkingAnimation() {
+  if (astThinkingTimer) {
+    clearInterval(astThinkingTimer);
+    astThinkingTimer = null;
+  }
+}
 
 async function initPersonalAssistant() {
   const sendBtn = document.getElementById('ast-send-btn');
@@ -1547,9 +1608,11 @@ async function handleAstSend() {
   astIsGenerating = true;
   document.getElementById('ast-send-btn').disabled = true;
   
-  const botDiv = appendAstMessage('bot', '<em>Thinking...</em>');
+  const botDiv = appendAstMessage('bot', '');
+  startThinkingAnimation(botDiv);
   
   if (!window.GeminiNanoClient) {
+    stopThinkingAnimation();
     botDiv.innerHTML = '<p style="color:var(--red);">AI Client not found.</p>';
     astIsGenerating = false;
     document.getElementById('ast-send-btn').disabled = false;
@@ -1571,6 +1634,7 @@ async function handleAstSend() {
   try {
     const result = await client.processAssistantPrompt(text, astHistory, context, 
       (tokenChunk) => {
+        stopThinkingAnimation();
         botDiv.innerHTML = formatAIOutput(tokenChunk);
         const container = document.getElementById('ast-chat-history');
         container.scrollTop = container.scrollHeight;
@@ -1581,6 +1645,7 @@ async function handleAstSend() {
       }
     );
     
+    stopThinkingAnimation();
     botDiv.innerHTML = formatAIOutput(result.reply || 'Action completed.');
     
     astHistory.push({ role: 'user', content: text });
@@ -1588,7 +1653,7 @@ async function handleAstSend() {
     
     // Check if this was a summarise request that extracted content
     if (result.actionExecuted && result.actionExecuted.tool === 'tool_extract_clean_content' && result.actionExecuted.success) {
-      const content = result.actionExecuted.result?.content || result.actionExecuted.report;
+      const content = (result.actionExecuted.result && result.actionExecuted.result.content) ? result.actionExecuted.result.content : result.actionExecuted.report;
       if (content) {
          const html = `<!DOCTYPE html><html><head><title>Cleaned Page</title><style>body{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:1rem;line-height:1.6;font-size:18px;color:#333;background:#f9f9f9;}</style></head><body><h1>Extracted Content</h1>${content.replace(/\n/g, '<br>')}</body></html>`;
          const blob = new Blob([html], { type: 'text/html' });
@@ -1597,6 +1662,7 @@ async function handleAstSend() {
       }
     }
   } catch (err) {
+    stopThinkingAnimation();
     botDiv.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
   }
   
