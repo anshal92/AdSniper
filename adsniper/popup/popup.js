@@ -1564,6 +1564,10 @@ async function initPersonalAssistant() {
   sendBtn.addEventListener('click', handleAstSend);
 
   // Feature Buttons
+  document.getElementById('ast-btn-summarize-day').addEventListener('click', () => {
+    input.value = 'Summarize my day';
+    handleAstSend();
+  });
   document.getElementById('ast-btn-summarize').addEventListener('click', () => {
     input.value = 'Please extract the clean readable content from this page and summarise it for me.';
     handleAstSend();
@@ -1704,13 +1708,48 @@ async function initListsPanel() {
     chrome.storage.local.set({ astScratchpad: '' });
   });
 
+  // Initialize ETA to today with limits
+  const etaInputElem = document.getElementById('todo-eta-input');
+  if (etaInputElem) {
+    const today = new Date();
+    etaInputElem.value = today.toISOString().split('T')[0];
+    
+    // min is -1 month, max is +5 years
+    const minDate = new Date(today);
+    minDate.setMonth(minDate.getMonth() - 1);
+    etaInputElem.min = minDate.toISOString().split('T')[0];
+    const maxDate = new Date(today);
+    maxDate.setFullYear(today.getFullYear() + 5);
+    etaInputElem.max = maxDate.toISOString().split('T')[0];
+
+    etaInputElem.addEventListener('change', () => {
+      const selected = new Date(etaInputElem.value);
+      if (isNaN(selected.getTime()) || selected > maxDate) {
+        const fallback = new Date(today);
+        fallback.setDate(today.getDate() + 2);
+        etaInputElem.value = fallback.toISOString().split('T')[0];
+      }
+    });
+  }
+
   // Todo events
   todoAddBtn.addEventListener('click', () => {
     const text = todoInput.value.trim();
+    const etaVal = document.getElementById('todo-eta-input').value;
+    const descVal = document.getElementById('todo-desc-input').value.trim();
     if (text) {
-      todos.push({ id: Date.now(), text, done: false });
+      todos.push({ 
+        id: Date.now(), 
+        text, 
+        done: false,
+        createdAt: new Date().toISOString(),
+        description: descVal,
+        eta: etaVal ? new Date(etaVal).toISOString() : null
+      });
       chrome.storage.local.set({ astTodos: todos });
       todoInput.value = '';
+      document.getElementById('todo-eta-input').value = new Date().toISOString().split('T')[0];
+      document.getElementById('todo-desc-input').value = '';
       renderTodos();
     }
   });
@@ -1735,9 +1774,16 @@ async function initListsPanel() {
   });
 
   window.addEventListener('AST_TODO_ADD', (e) => {
-    const { task } = e.detail;
+    const { task, description, eta } = e.detail;
     if (task) {
-      todos.push({ id: Date.now(), text: task, done: false });
+      todos.push({ 
+        id: Date.now(), 
+        text: task, 
+        done: false, 
+        createdAt: new Date().toISOString(), 
+        description: description || '', 
+        eta: eta || null 
+      });
       chrome.storage.local.set({ astTodos: todos });
       renderTodos();
     }
@@ -1749,10 +1795,61 @@ async function initListsPanel() {
       const div = document.createElement('div');
       div.className = 'todo-item ' + (todo.done ? 'done' : '');
       
+      let bg = '';
+      let daysLeftText = '';
+      let scale = 1;
+
+      if (todo.eta && !todo.done) {
+        const now = new Date();
+        const etaDate = new Date(todo.eta);
+        now.setHours(0,0,0,0);
+        etaDate.setHours(0,0,0,0);
+        const diffDays = Math.round((etaDate - now) / (1000 * 60 * 60 * 24));
+        
+        if (!isNaN(diffDays)) {
+          if (diffDays >= 10) {
+            bg = 'linear-gradient(to right, #22c55e 100%, transparent 0%)';
+            daysLeftText = `${diffDays} days left`;
+          } else if (diffDays > 0) {
+            const pct = (diffDays / 10) * 100;
+            bg = `linear-gradient(to right, #eab308 ${pct}%, #22c55e ${pct}%)`;
+            daysLeftText = `${diffDays} days left`;
+          } else if (diffDays === 0) {
+            bg = 'linear-gradient(to right, #ef4444 100%, transparent 0%)';
+            daysLeftText = 'Due today!';
+          } else {
+            const overdue = Math.abs(diffDays);
+            daysLeftText = `${overdue} days overdue!`;
+            bg = 'linear-gradient(to right, #ef4444 100%, transparent 0%)';
+            if (overdue >= 5) {
+              scale = 1;
+              div.classList.add('todo-on-fire');
+            } else {
+              scale = 1 + (overdue * 0.07);
+              if (scale > 1.35) scale = 1.35;
+            }
+          }
+        }
+      }
+
+      if (scale !== 1) {
+        div.style.transform = `scaleY(${scale})`;
+        div.style.margin = `${(scale - 1) * 20}px 0`;
+        div.style.zIndex = '10';
+      }
+
+      const progress = document.createElement('div');
+      progress.className = 'todo-progress';
+      if (bg) progress.style.background = bg;
+      
+      const contentRow = document.createElement('div');
+      contentRow.className = 'todo-item-content';
+      
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = todo.done;
-      cb.addEventListener('change', () => {
+      cb.addEventListener('change', (e) => {
+        e.stopPropagation();
         todo.done = cb.checked;
         chrome.storage.local.set({ astTodos: todos });
         renderTodos();
@@ -1764,15 +1861,72 @@ async function initListsPanel() {
       const del = document.createElement('button');
       del.className = 'todo-item-del';
       del.textContent = 'x';
-      del.addEventListener('click', () => {
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
         todos.splice(index, 1);
         chrome.storage.local.set({ astTodos: todos });
         renderTodos();
       });
 
-      div.appendChild(cb);
-      div.appendChild(span);
-      div.appendChild(del);
+      contentRow.appendChild(cb);
+      contentRow.appendChild(span);
+      contentRow.appendChild(del);
+
+      const details = document.createElement('div');
+      details.className = 'todo-details';
+      
+      const createdDate = todo.createdAt ? new Date(todo.createdAt).toLocaleDateString() : 'Unknown';
+      let detailsHTML = `<div style="display: flex; gap: 8px; margin-bottom: 4px;">
+        <p style="margin: 0; flex: 1;"><strong>Created:</strong> ${createdDate}</p>
+        ${todo.eta ? `<p style="margin: 0;">(${daysLeftText})</p>` : ''}
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px;" class="todo-edit-area">
+        <label style="font-size: 10px; margin-bottom: -2px;">ETA:</label>
+        <input type="date" class="edit-eta" min="${new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0]}" max="${new Date(new Date().setFullYear(new Date().getFullYear() + 5)).toISOString().split('T')[0]}" value="${todo.eta ? todo.eta.split('T')[0] : ''}" style="padding: 4px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text);">
+        <label style="font-size: 10px; margin-bottom: -2px;">Description:</label>
+        <textarea class="edit-desc" style="padding: 4px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); resize: vertical; min-height: 40px;">${todo.description || ''}</textarea>
+      </div>`;
+      details.innerHTML = detailsHTML;
+
+      const editArea = details.querySelector('.todo-edit-area');
+      editArea.addEventListener('click', (e) => e.stopPropagation());
+
+      const etaInput = details.querySelector('.edit-eta');
+      const descInput = details.querySelector('.edit-desc');
+
+      etaInput.addEventListener('change', () => {
+        const val = etaInput.value;
+        if (val) {
+           const selected = new Date(val);
+           const maxDate = new Date();
+           maxDate.setFullYear(maxDate.getFullYear() + 5);
+           if (isNaN(selected.getTime()) || selected > maxDate) {
+             const fallback = new Date();
+             fallback.setDate(fallback.getDate() + 2);
+             etaInput.value = fallback.toISOString().split('T')[0];
+             todo.eta = fallback.toISOString();
+           } else {
+             todo.eta = selected.toISOString();
+           }
+        } else {
+           todo.eta = null;
+        }
+        chrome.storage.local.set({ astTodos: todos });
+        renderTodos();
+      });
+
+      descInput.addEventListener('change', () => {
+        todo.description = descInput.value;
+        chrome.storage.local.set({ astTodos: todos });
+      });
+
+      div.addEventListener('click', () => {
+        details.classList.toggle('expanded');
+      });
+
+      div.appendChild(progress);
+      div.appendChild(contentRow);
+      div.appendChild(details);
       todoList.appendChild(div);
     });
   }

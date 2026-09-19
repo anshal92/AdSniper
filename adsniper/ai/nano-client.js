@@ -158,13 +158,19 @@ You ALSO have access to the following MCP Actions if explicitly requested:
 - tool_extract_clean_content(): Extracts clean, readable article text from the current page. Use this for general reading, summarizing, or explaining what the page is about.
 - tool_execute_js_script(code, description): Executes a JavaScript script in the active browser tab to inspect/extract DOM data. Must return the data. Use this for specific DOM queries (e.g., getting links, counting specific words/elements, extracting images). Do NOT use for general reading.
 - tool_add_scratchpad(content, append): Saves text to the user's Scratchpad. If append is true, appends it; else replaces the pad.
-- tool_add_todo(task): Adds a new task to the user's Todo List.
+- tool_add_todo(task, description, eta): Adds a new task to the user's Todo List. 'description' is optional context. 'eta' is an optional ISO date string for when the task is due.
+- tool_get_todos(): Retrieves the current Todo List in JSON format so you can analyze, summarize, or check tasks.
 
 CRITICAL INSTRUCTIONS:
 1. ONLY execute a tool if the user explicitly asks to interact with the page, save a note, or add a todo.
 2. If the user just asks a question, calculation, or conversational prompt, answer them normally in text! Do NOT output a tool JSON.
 3. When the user asks to extract, read, or summarise page content, use tool_extract_clean_content. Do NOT use tool_execute_js_script for this.
-4. If you do need to execute a tool, output ONLY the tool JSON in a markdown block exactly like this:
+4. If asked to summarize the day or tasks, you MUST call tool_get_todos() by outputting EXACTLY:
+\`\`\`action
+{"tool": "tool_get_todos", "args": {}}
+\`\`\`
+The tool returns the tasks already categorized and pre-formatted into an object. Present a Day Summary with an emoji header (e.g. 📅 **Day Summary**), and output the exact contents of the returned JSON directly as markdown bullet points.
+5. If you do need to execute a tool, output ONLY the tool JSON in a markdown block exactly like this:
 \`\`\`action
 {"tool": "tool_name", "args": {"arg_name": "value"}}
 \`\`\``;
@@ -265,8 +271,11 @@ CRITICAL INSTRUCTIONS:
 
     this.isAssistantInitializing = true;
     try {
+      const currentContext = `\n\n[SYSTEM CONTEXT]\nCurrent Date & Time: ${new Date().toString()}`;
+      const systemPrompt = GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + currentContext;
+      
       const createOptions = {
-        systemPrompt: GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT,
+        systemPrompt: systemPrompt,
         temperature: 0.7,
         topK: 3,
       };
@@ -275,7 +284,7 @@ CRITICAL INSTRUCTIONS:
         this.assistantSession = await lm.create(createOptions);
       } catch (optErr) {
         try {
-          this.assistantSession = await lm.create({ systemPrompt: GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT });
+          this.assistantSession = await lm.create({ systemPrompt: systemPrompt });
         } catch (promptErr) {
           this.assistantSession = await lm.create();
         }
@@ -823,11 +832,18 @@ CRITICAL INSTRUCTIONS:
       // If the tool extracted text or raw JSON data, we need a second pass to synthesize it into a human-readable answer
       const needsSynthesis = actionResult && actionResult.success && (
         (actionResult.tool === 'tool_extract_clean_content' && actionResult.text) ||
-        (actionResult.tool === 'tool_execute_js_script' && actionResult.report)
+        (actionResult.tool === 'tool_execute_js_script' && actionResult.report) ||
+        (actionResult.tool === 'tool_get_todos' && actionResult.report)
       );
 
       if (needsSynthesis) {
-        if (onToken) onToken(`✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n*Synthesizing answer...*`);
+        if (onToken) {
+          if (actionResult.tool === 'tool_get_todos') {
+            onToken(`*Synthesizing answer...*`);
+          } else {
+            onToken(`✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n*Synthesizing answer...*`);
+          }
+        }
         
         try {
           const extractedData = actionResult.text ? actionResult.text : actionResult.report;
@@ -847,13 +863,24 @@ CRITICAL INSTRUCTIONS:
                 summaryResponse += chunk;
               }
               const displaySnippet = this.cleanActionFromReply(summaryResponse);
-              if (displaySnippet) onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${displaySnippet}`);
+              if (displaySnippet) {
+                if (actionResult.tool === 'tool_get_todos') {
+                  onToken(displaySnippet);
+                } else {
+                  onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${displaySnippet}`);
+                }
+              }
             }
           } else {
             const rawRes = await session.prompt(summaryPrompt);
             summaryResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
           }
-          cleanedReply = `✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n${this.cleanActionFromReply(summaryResponse)}`;
+          
+          if (actionResult.tool === 'tool_get_todos') {
+            cleanedReply = this.cleanActionFromReply(summaryResponse);
+          } else {
+            cleanedReply = `✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n${this.cleanActionFromReply(summaryResponse)}`;
+          }
           return { reply: cleanedReply, actionExecuted: actionResult };
         } catch (err) {
           console.warn('[AdSniper AI] Second pass summarization failed:', err);
@@ -862,9 +889,15 @@ CRITICAL INSTRUCTIONS:
 
       if (actionResult && actionResult.success) {
         if (!cleanedReply) {
-          cleanedReply = `✅ **Action Executed:** ${actionResult.message || actionResult.report || ''}`;
+          if (actionResult.tool === 'tool_get_todos') {
+            cleanedReply = actionResult.report || '';
+          } else {
+            cleanedReply = `✅ **Action Executed:** ${actionResult.message || actionResult.report || ''}`;
+          }
         } else if (!cleanedReply.toLowerCase().includes('executed') && !cleanedReply.toLowerCase().includes('removed') && !cleanedReply.toLowerCase().includes('activated') && !cleanedReply.toLowerCase().includes('cleared')) {
-          cleanedReply = `✅ **Action Executed:** ${actionResult.message}\n\n${cleanedReply}`;
+          if (actionResult.tool !== 'tool_get_todos') {
+            cleanedReply = `✅ **Action Executed:** ${actionResult.message}\n\n${cleanedReply}`;
+          }
         }
       } else if (actionResult && !actionResult.success) {
         if (!cleanedReply) {
@@ -1415,9 +1448,53 @@ CRITICAL INSTRUCTIONS:
       case 'tool_add_todo': {
         try {
           window.dispatchEvent(new CustomEvent('AST_TODO_ADD', { 
-            detail: { task: args.task } 
+            detail: { task: args.task, description: args.description || '', eta: args.eta || null } 
           }));
           return { success: true, tool: toolName, message: 'Added task to Todo list.' };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      }
+
+      case 'tool_get_todos': {
+        try {
+          const data = await chrome.storage.local.get(['astTodos']);
+          const todos = data.astTodos || [];
+          
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          
+          const report = {
+            "🔥 Burning (overdue/due today)": [],
+            "🔴 High Priority (1-3 days)": [],
+            "🟡 Low Priority (4-7 days)": [],
+            "🟢 No Hurry (>7 days or no ETA)": [],
+            "✅ Complete": []
+          };
+          
+          todos.forEach(t => {
+            const taskStr = t.eta ? `${t.text} (due ${t.eta.split('T')[0]})` : t.text;
+            if (t.done) {
+              report["✅ Complete"].push(taskStr);
+              return;
+            }
+            if (!t.eta) {
+              report["🟢 No Hurry (>7 days or no ETA)"].push(taskStr);
+              return;
+            }
+            
+            const etaDate = new Date(t.eta);
+            etaDate.setHours(0, 0, 0, 0);
+            const diffTime = etaDate.getTime() - now.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays <= 0) report["🔥 Burning (overdue/due today)"].push(taskStr);
+            else if (diffDays <= 3) report["🔴 High Priority (1-3 days)"].push(taskStr);
+            else if (diffDays <= 7) report["🟡 Low Priority (4-7 days)"].push(taskStr);
+            else report["🟢 No Hurry (>7 days or no ETA)"].push(taskStr);
+          });
+
+          return { success: true, tool: toolName, message: 'Fetched Tasks', report: JSON.stringify(report, null, 2) };
         } catch (e) {
           return { success: false, error: e.message };
         }

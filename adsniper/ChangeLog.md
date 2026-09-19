@@ -323,3 +323,32 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 ### Fixed
 - Tuned the Personal Assistant prompt to correctly prioritize \	ool_execute_js_script\ for counting specific words or extracting specific elements, rather than defaulting to full-page summarization.
 - Added explicit instructions to the second-pass synthesizer to extract exact URLs and values from JSON output to prevent the AI from hallucinating missing data.
+
+### Added
+- Enhanced Todo List with Expandable UI showing Creation Date, ETA, and Descriptions.
+- Added dynamic progress bar backgrounds for tasks based on ETA (Green -> Yellow -> Red).
+- Added CSS animations for Overdue tasks: scales up 5% per day overdue (max 20%), and ignites with animated fire at 5+ days overdue.
+- Gave Personal Assistant awareness of the current date and time so it can accurately calculate ETAs like 'next Friday'.
+
+- Added inline editing capabilities for Tasks: The manual Add bar now has ETA and Description fields, and expanding an existing task reveals editable fields that auto-save.
+
+- Fixed ETA Date Pickers to cap maximum selection at +5 years, defaulting to +2 days for out-of-bounds dates.
+- Fixed CSS z-indexing bug that hid the green/yellow/red progress bars behind the task background.
+- Refined overdue task scaling animation to scale vertically only (scaleY), avoiding text overlap issues.
+
+- Adjusted ETA bounds to allow selecting dates up to 1 month in the past.
+- Standardized CSS styling for the manual Optional Description input so it matches the main task input exactly.
+- Provided the Personal Assistant tool_get_todos() access to the Todo List and instructed it to provide structured Day Summaries when requested.
+
+- Hardened tool_get_todos instruction formatting in Personal Assistant's prompt to avoid tool_code hallucinations.
+- Fixed Personal Assistant quick action chips overflow by using flex-wrap.
+- Tweaked task overdue vertical scaling to 7% per day (max 35%).
+- Moved 'Summarize my day' button from Ad Blocker tab to Personal Assistant tab.
+- Fixed 'Summarize my day' outputting raw JSON by enabling the LLM synthesis pass for tool_get_todos.
+- Stripped 'Action Executed: Fetched Tasks' prefix from Day Summary output.
+- Injected date-math categorization ('suggestedCategory') directly into the tool_get_todos payload to prevent Gemini Nano from miscategorizing task ETAs.
+- Increased entire popup width by 10% (520px -> 575px) and base font to 13px.
+- Added CSS list margins/padding for Assistant AI messages to fix indentation.
+- Updated tool_get_todos to filter out completed tasks and label them 'Complete'.
+- Updated AI system prompt to include '✅ Complete' section in Day Summary.
+- Pre-grouped tasks into categories directly inside tool_get_todos payload. The AI now only has to print the pre-grouped JSON as markdown without doing any grouping logic, preventing it from incorrectly classifying completed tasks as active priorities.

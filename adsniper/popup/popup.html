@@ -28,9 +28,9 @@
     }
 
     body {
-      width: 520px;
+      width: 575px;
       font-family: 'Segoe UI', system-ui, sans-serif;
-      font-size: 12px;
+      font-size: 13px;
       background: var(--bg);
       color: var(--text);
     }
@@ -1129,8 +1129,8 @@
     /* Quick action chips */
     .ai-quick-chips {
       display: flex;
+      flex-wrap: wrap;
       gap: 5px;
-      overflow-x: auto;
       padding-bottom: 2px;
     }
     .ai-quick-chips::-webkit-scrollbar { display: none; }
@@ -1329,10 +1329,23 @@
       font-family: 'JetBrains Mono', monospace;
       padding: 8px 12px;
       border-radius: 8px;
-      font-size: 12px;
+      font-size: 13px;
       line-height: 1.4;
       max-width: 85%;
       word-wrap: break-word;
+    }
+    .ast-message ul.ai-list, .ast-message ol.ai-num-list {
+      margin-left: 16px;
+      margin-top: 4px;
+      margin-bottom: 6px;
+    }
+    .ast-message li { margin-bottom: 3px; }
+    .ast-message p { margin-bottom: 6px; }
+    .ast-message .ai-heading {
+      font-weight: 700;
+      color: #fff;
+      margin: 6px 0 3px 0;
+      font-size: 13.5px;
     }
     .ast-message.user-msg {
       background: var(--accent);
@@ -1472,6 +1485,9 @@
       gap: 6px;
     }
     .todo-item {
+      position: relative;
+      transition: transform 0.3s ease, margin 0.3s ease;
+      flex-wrap: wrap;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -1479,6 +1495,52 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 4px;
+    }
+    .todo-progress {
+      position: absolute;
+      top: 0; left: 0; bottom: 0; right: 0;
+      z-index: 0;
+      opacity: 0.25;
+      border-radius: inherit;
+    }
+    .todo-item-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      width: 100%;
+      cursor: pointer;
+    }
+    .todo-details {
+      position: relative;
+      z-index: 1;
+      display: none;
+      flex-direction: column;
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      width: 100%;
+    }
+    .todo-details.expanded {
+      display: flex;
+    }
+    .todo-details p { margin: 2px 0; }
+    
+    @keyframes fireCorner {
+      0% { box-shadow: 0 0 5px #f59e0b, 0 0 10px #ef4444; }
+      50% { box-shadow: 0 0 10px #ef4444, 0 0 20px #dc2626, inset 0 0 5px #f59e0b; }
+      100% { box-shadow: 0 0 5px #f59e0b, 0 0 10px #ef4444; }
+    }
+    .todo-on-fire {
+      animation: fireCorner 0.5s infinite alternate;
+      border-color: #ef4444 !important;
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+      cursor: pointer;
     }
     .todo-item.done span {
       text-decoration: line-through;
@@ -1506,7 +1568,7 @@
       background: var(--surface);
       border-top: 1px solid var(--border);
     }
-    #todo-input {
+    #todo-input, #todo-desc-input {
       flex: 1;
       padding: 6px 10px;
       background: var(--surface2);
@@ -1515,7 +1577,7 @@
       color: var(--text);
       outline: none;
     }
-    #todo-input:focus { border-color: var(--accent); }
+    #todo-input:focus, #todo-desc-input:focus { border-color: var(--accent); }
     #todo-add-btn {
       background: var(--accent);
       color: white;
@@ -1731,6 +1793,7 @@
   </div>
 
   <div class="assistant-features-bar">
+    <button class="ast-feature-btn" id="ast-btn-summarize-day">📅 Summarize my Day</button>
     <button class="ast-feature-btn" id="ast-btn-summarize">📝 Summarise Page</button>
     <button class="ast-feature-btn" id="ast-btn-calc">🧮 Calculator</button>
     <button class="ast-feature-btn" id="ast-btn-grammar">✍️ Grammar Fixer</button>
@@ -1771,7 +1834,11 @@
         <!-- Todo items will be injected here -->
       </div>
       <div class="todo-input-row">
-        <input type="text" id="todo-input" placeholder="Add a new task...">
+        <input type="text" id="todo-input" placeholder="Task title..." style="flex: 2;">
+        <input type="date" id="todo-eta-input" title="ETA" style="flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);">
+      </div>
+      <div class="todo-input-row" style="border-top: none; padding-top: 0;">
+        <input type="text" id="todo-desc-input" placeholder="Optional description..." style="flex: 1;">
         <button id="todo-add-btn">Add</button>
       </div>
     </div>
@@ -1799,3 +1866,5 @@
 <script src="popup.js"></script>
 </body>
 </html>
+
+
