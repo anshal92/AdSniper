@@ -8,40 +8,28 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
 
 ---
 
+## 📑 Index
+
+- [🚀 Key Features](#-key-features)
+  - [🤖 1. On-Device Gemini Nano AI — Dual-Engine Architecture](#-1-on-device-gemini-nano-ai--dual-engine-architecture)
+  - [🛡️ 2. Surgical Ad & Tracker Blocker](#️-2-surgical-ad--tracker-blocker)
+  - [🎯 3. Element Picker & iFrame Purger](#-3-element-picker--iframe-purger)
+  - [🔫 4. Gamified Sniping Mode (Turn Ads into Targets!)](#-4-gamified-sniping-mode-turn-ads-into-targets)
+  - [📋 5. Scratchpad & Todo Lists](#-5-scratchpad--todo-lists)
+  - [🚫 6. Intrusive Pop-up & Anti-Adblock Interceptor](#-6-intrusive-pop-up--anti-adblock-interceptor)
+  - [🍪 7. Advanced Cookie Manager & Lock System](#-7-advanced-cookie-manager--lock-system)
+- [📦 How to Install](#-how-to-install)
+- [🧠 How to Enable Chrome Built-in AI (Gemini Nano)](#-how-to-enable-chrome-built-in-ai-gemini-nano)
+- [🎮 How to Play Sniping Mode](#-how-to-play-sniping-mode)
+- [📂 Project Structure](#-project-structure)
+- [🔒 Privacy & Permissions](#-privacy--permissions)
+- [📄 License](#-license)
+
+---
+
 ## 🚀 Key Features
 
-### 🛡️ 1. Surgical Ad & Tracker Blocker
-- **Declarative Rule Engine**: Built on Chrome's native `declarativeNetRequest` (DNR) API for lightning-fast request blocking with minimal memory and CPU overhead.
-- **Mass-Block Filter List**: Bundled with comprehensive ad host definitions (Peter Lowe’s list and curated patterns) to block thousands of tracking, telemetry, and advertising servers.
-- **Live Request Monitor**: Inspect outgoing network requests in real time per tab (up to 200 requests logged), complete with request types, domains, and single-click custom rule creation.
-- **Per-Rule Hit Counters**: Track exactly how many ads each rule has eliminated with real-time badge counters.
-
-### 🚫 2. Intrusive Pop-up & Anti-Adblock Interceptor
-- **Block New Tab Ads**: Intercepts `main_frame` navigations and redirects to prevent deceptive links from spawning intrusive ad tabs.
-- **Full-Screen Overlay Neutralization**: Employs immediate CSS injection (`injectAntiOverlayStyles`) and DOM mutation observers to obliterate anti-adblock modals, transparent click-hijacking overlays, floating video ads, and interstitials (`data-shb`, PopCash, Adsterra, Monetag).
-- **Ad Message Sandboxing**: Captures and cancels obfuscated `postMessage` triggers sent between ad iframes and parent windows.
-
-### 🎯 3. Element Picker & iFrame Purger
-- **Visual Element Picker**: Click **🎯 Pick Element**, hover over any unwanted page component with a red highlight guide, and click to remove it and generate a persistent blocking rule.
-- **Automated iFrame Eradicator**: Scans the DOM using multi-point heuristics (known ad sizes, suspicious source URLs, sandbox attributes) and completely removes sneaky ad iframes from the page.
-
-### 🍪 4. Advanced Cookie Manager & Lock System
-- **Cookie Inspector**: View, inspect, create, and edit cookies for the active domain.
-- **Cookie Lock Protection**: Lock critical or sensitive cookies to prevent websites or third-party scripts from modifying or overwriting your session preferences during browsing.
-
-### 🔫 5. Gamified Sniping Mode (Turn Ads into Targets!)
-- **Ad Hunting**: Click **🔫 Sniping OFF** in the header to turn off ad-blocking on the current page, reload (or open in a new tab), scan all incoming ad elements, and turn them into flying bird targets!
-- **Dynamic Physics & Sizing**:
-  - **Inverse Sizing**: Small banner ads become large, easy targets; gigantic screen-covering ads become nimble, miniature birds.
-  - **Flutter Trajectories**: Birds flap their wings and fly across your screen with dual-frequency sinusoidal wave paths (`y = A₁·sin(ω₁·t) + A₂·sin(ω₂·t)`), changing headings dynamically.
-- **Marksman Scoring & Piercing Multikills**:
-  - Consecutive hits build a combo multiplier up to **×5**.
-  - Piercing crosshair allows **Double Kills**, **Triple Kills**, and **Multikills (4+)** when flying targets align.
-  - Real-time HUD displays score, combo, birds hit, and missed shots.
-  - **Celebration Fireworks**: Scoring an accuracy of **> 80%** triggers a celebratory fireworks display around the results screen!
-  - **Interactive Results Screen**: Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
-
-### 🤖 6. On-Device Gemini Nano AI — Dual-Engine Architecture
+### 🤖 1. On-Device Gemini Nano AI — Dual-Engine Architecture
 AdSniper runs **two independent AI engines** on-device, each with its own dedicated system prompt and session:
 
 #### 🛡️ AdBlocker AI (Action-Only Engine)
@@ -72,12 +60,43 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
 - **Quick-Action Feature Chips**: One-click prompt templates for common tasks: 📝 Summarise Page, 🧮 Calculator, ✍️ Grammar Fixer, 🗒️ Save Note, ✅ Add Todo.
 - **MCP Tools (Selective)**: The assistant can call `tool_execute_js_script`, `tool_add_scratchpad`, and `tool_add_todo`—but **only when explicitly requested**. Normal questions are answered conversationally.
 
-### 📋 7. Scratchpad & Todo Lists
+### 🛡️ 2. Surgical Ad & Tracker Blocker
+- **Declarative Rule Engine**: Built on Chrome's native `declarativeNetRequest` (DNR) API for lightning-fast request blocking with minimal memory and CPU overhead.
+- **Mass-Block Filter List**: Bundled with comprehensive ad host definitions (Peter Lowe’s list and curated patterns) to block thousands of tracking, telemetry, and advertising servers.
+- **Live Request Monitor**: Inspect outgoing network requests in real time per tab (up to 200 requests logged), complete with request types, domains, and single-click custom rule creation.
+- **Per-Rule Hit Counters**: Track exactly how many ads each rule has eliminated with real-time badge counters.
+
+### 🎯 3. Element Picker & iFrame Purger
+- **Visual Element Picker**: Click **🎯 Pick Element**, hover over any unwanted page component with a red highlight guide, and click to remove it and generate a persistent blocking rule.
+- **Automated iFrame Eradicator**: Scans the DOM using multi-point heuristics (known ad sizes, suspicious source URLs, sandbox attributes) and completely removes sneaky ad iframes from the page.
+
+### 🔫 4. Gamified Sniping Mode (Turn Ads into Targets!)
+- **Ad Hunting**: Click **🔫 Sniping OFF** in the header to turn off ad-blocking on the current page, reload (or open in a new tab), scan all incoming ad elements, and turn them into flying bird targets!
+- **Dynamic Physics & Sizing**:
+  - **Inverse Sizing**: Small banner ads become large, easy targets; gigantic screen-covering ads become nimble, miniature birds.
+  - **Flutter Trajectories**: Birds flap their wings and fly across your screen with dual-frequency sinusoidal wave paths (`y = A₁·sin(ω₁·t) + A₂·sin(ω₂·t)`), changing headings dynamically.
+- **Marksman Scoring & Piercing Multikills**:
+  - Consecutive hits build a combo multiplier up to **×5**.
+  - Piercing crosshair allows **Double Kills**, **Triple Kills**, and **Multikills (4+)** when flying targets align.
+  - Real-time HUD displays score, combo, birds hit, and missed shots.
+  - **Celebration Fireworks**: Scoring an accuracy of **> 80%** triggers a celebratory fireworks display around the results screen!
+  - **Interactive Results Screen**: Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
+
+### 📋 5. Scratchpad & Todo Lists
 - **Dedicated "📋 Lists" Tab**: A side-by-side panel with a persistent **Scratchpad** notepad and a **Todo List** task manager.
 - **Manual & AI-Powered**: Add notes and tasks manually, or let the Personal Assistant write to them autonomously during chat (e.g., *"Summarize this article and save key points to my scratchpad"* or *"Add 'review PR' to my todo list"*).
 - **Todo Management**: Add tasks, check them off, clear completed items, or delete individual tasks.
 - **Persistent Storage**: All data is saved instantly to `chrome.storage.local` and persists across popup reopens and browser restarts.
 - **Real-Time Sync**: AI writes are reflected instantly in the Lists tab via DOM custom events (`AST_SCRATCHPAD_UPDATE`, `AST_TODO_ADD`)—no manual refresh required.
+
+### 🚫 6. Intrusive Pop-up & Anti-Adblock Interceptor
+- **Block New Tab Ads**: Intercepts `main_frame` navigations and redirects to prevent deceptive links from spawning intrusive ad tabs.
+- **Full-Screen Overlay Neutralization**: Employs immediate CSS injection (`injectAntiOverlayStyles`) and DOM mutation observers to obliterate anti-adblock modals, transparent click-hijacking overlays, floating video ads, and interstitials (`data-shb`, PopCash, Adsterra, Monetag).
+- **Ad Message Sandboxing**: Captures and cancels obfuscated `postMessage` triggers sent between ad iframes and parent windows.
+
+### 🍪 7. Advanced Cookie Manager & Lock System
+- **Cookie Inspector**: View, inspect, create, and edit cookies for the active domain.
+- **Cookie Lock Protection**: Lock critical or sensitive cookies to prevent websites or third-party scripts from modifying or overwriting your session preferences during browsing.
 
 ---
 
@@ -115,94 +134,30 @@ Look for the **Developer mode** toggle in the top-right corner of the Extensions
 
 ---
 
-## 🧠 How to Enable Chrome Built-in AI (Gemini Nano) & Flags
+## 🧠 How to Enable Chrome Built-in AI (Gemini Nano)
 
-AdSniper leverages Google's **Gemini Nano** via Chrome's native **Prompt API**. While AdSniper works immediately with its built-in **Heuristics Fallback Engine**, enabling Chrome's experimental flags unlocks generative on-device intelligence.
+AdSniper uses **Gemini Nano**, Google’s on-device AI that runs directly inside Chrome. No cloud servers, no API keys, and 100% private. 
 
-### 1. Prerequisites
-- **Browser**: Google Chrome version **128+** (Dev, Canary, Beta, or Stable 131+).
-- **Storage**: At least **22 GB free disk space** on your primary OS drive (required by Chrome to provision the model container).
-- **GPU / Hardware**: Modern GPU with at least **4 GB VRAM**, or a recent CPU with DirectML / WebGPU support.
-- **Network**: An unmetered connection for the initial on-device model download (~1.5 GB - 2.5 GB).
+If your AI status shows **🔴 Offline** or you just installed AdSniper, follow these simple steps to wake it up!
 
-### 2. Configure Chrome Flags
-Open a new tab in Chrome and configure the following flags:
+### Step 1: Open Chrome Settings
+In your address bar, type `chrome://flags` and press Enter.
 
-1. **Enable the Prompt API**:
-   - In modern Chrome builds (Chrome 131+), the flag is named **`#prompt-api`**:
-     ```text
-     chrome://flags/#prompt-api
-     ```
-   - *(In earlier Chrome 128–130 builds, it was named `chrome://flags/#prompt-api-for-gemini-nano`)*
-   - Set the dropdown to **Enabled** (or **Enabled on user gesture**).
+### Step 2: Turn on the AI Flags
+Search for these two flags and enable them:
+1. **Prompt API for Extension:** Search for `#prompt-api` and set it to **Enabled**.
+2. **Bypass Hardware Checks (Optional but recommended):** Search for `#optimization-guide-on-device-model` and set it to **Enabled BypassPerfRequirement**. This forces Chrome to download the AI even if you don't have a high-end graphics card.
 
-2. **Bypass Hardware Restrictions (If Available)**:
-   - Search for:
-     ```text
-     chrome://flags/#optimization-guide-on-device-model
-     ```
-   - If present in your build, set the dropdown to **Enabled BypassPerfRequirement** (this ensures Chrome downloads Gemini Nano even if your device isn't on Google's strict GPU whitelist).
+### Step 3: Relaunch & Wait for Download
+1. Click the **Relaunch** button at the bottom of the screen.
+2. Once Chrome restarts, it will quietly start downloading the Gemini Nano model in the background (about 1.5GB to 2.5GB). 
 
-3. **Relaunch Chrome (CRITICAL)**:
-   - Click the **Relaunch** button at the bottom of `chrome://flags` (or close all Chrome windows and reopen).
-   - > [!IMPORTANT]
-   - > If Chrome shows *"Nearly up to date! Relaunch Chrome to finish updating"*, you **must** relaunch Chrome for the browser update and the enabled flags to take effect. Until relaunched, `window.ai` will remain `undefined`.
+### Step 4: Check Download Status
+Want to see how the download is doing?
+- Go to `chrome://on-device-internals`. You'll see the exact download progress and model status there!
+- Alternatively, go to `chrome://components/`, look for **Optimization Guide On Device Model**, and click "Check for update". 
 
-### 3. Verify & Download the Gemini Nano Model
-After relaunching, you can monitor and trigger the model download in two ways:
-
-#### Option A: Dedicated AI Dashboard (Best & Easiest)
-1. Navigate to:
-   ```text
-   chrome://on-device-internals
-   ```
-2. Check the **Model Status** and **Device Status**:
-   - If the model is not installed or has an update, you can monitor download status, hardware capability, and file paths directly.
-
-#### Option B: Chrome Components
-1. Navigate to:
-   ```text
-   chrome://components/
-   ```
-2. Search for:
-   ```text
-   Optimization Guide On Device Model
-   ```
-3. Click **Check for update**.
-   - Wait until the version changes to a non-zero number (e.g., `2024.x.x.x` or `2025.x.x.x`) and status shows **Up-to-date**.
-
-### 4. Verify Model Availability in DevTools Console
-In modern Chrome, the Prompt API is exposed via the standard **`LanguageModel`** interface (replacing the legacy `window.ai` namespace) and is scoped to Extension contexts:
-
-1. **Open the Extension Console**:
-   - Click the **AdSniper** puzzle piece icon in your toolbar to open the popup.
-   - **Right-click** inside the popup and select **Inspect** (or "Inspect popup").
-   - *(Note: Running in a standard web tab console may return undefined because Chrome isolates on-device AI from untrusted public websites).*
-2. In the DevTools **Console**, test the global interface:
-   ```javascript
-   await (window.LanguageModel || window.ai?.languageModel).availability();
-   ```
-   *Or directly:*
-   ```javascript
-   await LanguageModel.availability();
-   ```
-3. **Interpreting Results**:
-   - `'readily'`: Gemini Nano is fully downloaded, loaded in VRAM, and ready for instant use!
-   - `'after-download'` / `'downloadable'`: Flags are active, but model download is pending. Run `await LanguageModel.create();` to trigger download.
-   - `'unavailable'` / `'no'`: System hardware does not meet requirements, or `BypassPerfRequirement` was omitted.
-
-### 5. Using AI Assistant in AdSniper
-1. Click the **AdSniper** extension icon in your toolbar.
-2. In the top action bar, click **✨ Enable AI**.
-3. Look at the status pill:
-   - 🟢 **Nano Ready**: Gemini Nano is running 100% on-device!
-   - 🟢 **Heuristics Mode**: Gemini Nano flags are inactive or downloading, but AdSniper's on-device heuristic engine is running all MCP tools seamlessly.
-   - 🟡 **Downloading X%**: Chrome is actively fetching model chunks.
-4. Try sample commands:
-   - Click **`🎯 Audit Trackers`** or type *"Audit suspicious tracking calls on this tab"*.
-   - Click **`🧹 Kill Overlays`** or type *"Kill popups and modals"*.
-   - Click **`📝 Reader View`** or type *"Extract clean article text"*.
-   - Type *"Block doubleclick.net"* or *"Stop new tab ads"*.
+Once it finishes, open the AdSniper popup, click **✨ Enable AI**, and your on-device personal assistant is ready to go!
 
 ---
 

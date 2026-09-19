@@ -352,3 +352,7 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 - Updated tool_get_todos to filter out completed tasks and label them 'Complete'.
 - Updated AI system prompt to include '✅ Complete' section in Day Summary.
 - Pre-grouped tasks into categories directly inside tool_get_todos payload. The AI now only has to print the pre-grouped JSON as markdown without doing any grouping logic, preventing it from incorrectly classifying completed tasks as active priorities.
+- Reordered features in README.md to prioritize AI, Ad Blocker, Element Picker, and Sniping Mode.
+- Added a quick navigation Index to README.md.
+- Greatly simplified the 'How to Enable Chrome Built-in AI' section in README.md to make it highly user-friendly.
+- Reordered features in README.md to bump Scratchpad & Todo Lists to the 5th spot.
