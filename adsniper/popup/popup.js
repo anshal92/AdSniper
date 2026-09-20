@@ -1504,7 +1504,9 @@ async function handleSnipingGame() {
 // PERSONAL ASSISTANT
 // ==========================================
 let astHistory = [];
-let astContextSize = 10;
+let astContextSize = 50;
+let astChatTimerDelay = 10;
+let astLastUrl = '';
 let astIsGenerating = false;
 let astThinkingTimer = null;
 
@@ -1547,15 +1549,46 @@ function stopThinkingAnimation() {
 async function initPersonalAssistant() {
   const sendBtn = document.getElementById('ast-send-btn');
   const input = document.getElementById('ast-input');
-  const historyInput = document.getElementById('ast-context-size');
   
-  historyInput.addEventListener('change', (e) => {
-    let val = parseInt(e.target.value, 10);
-    if (isNaN(val) || val < 1) val = 1;
-    if (val > 50) val = 50;
-    astContextSize = val;
-    e.target.value = val;
-  });
+  const timerSelect = document.getElementById('ast-chat-timer');
+  if (timerSelect) {
+    timerSelect.value = astChatTimerDelay;
+    timerSelect.addEventListener('change', (e) => {
+      astChatTimerDelay = parseInt(e.target.value, 10);
+      chrome.storage.local.set({ astChatTimerDelay });
+      if (astChatTimerDelay === 0) {
+        astHistory = [];
+        chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now() });
+        document.getElementById('ast-chat-history').innerHTML = '';
+      }
+    });
+  }
+
+  const placeholderHints = [
+    'Ask assistant to draft email...',
+    'Summarize this page...',
+    'Fix grammar on this page...',
+    'What is the helpline number?',
+    'Get me social media links...'
+  ];
+  let hintIndex = 0;
+  setInterval(() => {
+    if (!astIsGenerating && input) {
+      input.placeholder = placeholderHints[hintIndex];
+      hintIndex = (hintIndex + 1) % placeholderHints.length;
+    }
+  }, 3000);
+
+  const historyInput = document.getElementById('ast-context-size');
+  if (historyInput) {
+    historyInput.addEventListener('change', (e) => {
+      let val = parseInt(e.target.value, 10);
+      if (isNaN(val) || val < 1) val = 1;
+      if (val > 50) val = 50;
+      astContextSize = val;
+      e.target.value = val;
+    });
+  }
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1566,81 +1599,97 @@ async function initPersonalAssistant() {
   
   sendBtn.addEventListener('click', handleAstSend);
 
-  // Feature Buttons
-  document.getElementById('ast-btn-summarize-day').addEventListener('click', () => {
-    input.value = 'Summarize my day';
-    handleAstSend();
-  });
-  document.getElementById('ast-btn-summarize').addEventListener('click', () => {
-    input.value = 'Please extract the clean readable content from this page and summarise it for me.';
-    handleAstSend();
-  });
-  document.getElementById('ast-btn-calc').addEventListener('click', () => {
-    input.value = 'Calculate: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-grammar').addEventListener('click', () => {
-    input.value = 'Fix the grammar in the following text: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-note').addEventListener('click', () => {
-    input.value = 'Save the following to my scratchpad: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-todo').addEventListener('click', () => {
-    input.value = 'Add the following to my todo list: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-download-chat').addEventListener('click', () => {
-    const messages = document.querySelectorAll('.ast-message');
-    let chatText = "AdSniper Chat History\n=====================\n\n";
-    messages.forEach(msg => {
-      const isUser = msg.classList.contains('user-msg');
-      const isBot = msg.classList.contains('bot-msg');
-      if (isUser) {
-        chatText += "You:\n" + (msg.innerText || msg.textContent).trim() + "\n\n";
-      } else if (isBot) {
-        const contentDiv = msg.querySelector('.ast-message-content');
-        const text = contentDiv ? (contentDiv.innerText || contentDiv.textContent) : (msg.innerText || msg.textContent).replace(/Copy$/, '').replace(/Copied!$/, '');
-        chatText += "Assistant:\n" + text.trim() + "\n\n";
-      }
+  const btnSummarizeDay = document.getElementById('ast-btn-summarize-day');
+  if (btnSummarizeDay) {
+    btnSummarizeDay.addEventListener('click', () => {
+      input.value = 'Summarize my day';
+      handleAstSend();
     });
+  }
+  
+  const btnSummarize = document.getElementById('ast-btn-summarize');
+  if (btnSummarize) {
+    btnSummarize.addEventListener('click', () => {
+      input.value = 'Please extract the clean readable content from this page and summarise it for me.';
+      handleAstSend();
+    });
+  }
+  
+  const btnNote = document.getElementById('ast-btn-note');
+  if (btnNote) {
+    btnNote.addEventListener('click', () => {
+      input.value = 'Save this note: ';
+      input.focus();
+    });
+  }
+  
+  const btnTodo = document.getElementById('ast-btn-todo');
+  if (btnTodo) {
+    btnTodo.addEventListener('click', () => {
+      input.value = 'Add to my todo list: ';
+      input.focus();
+    });
+  }
+
+  const btnDownloadChat = document.getElementById('ast-btn-download-chat');
+  if (btnDownloadChat) {
+    btnDownloadChat.addEventListener('click', () => {
+      const chatText = astHistory.map(msg => msg.role + ': ' + msg.content).join('\n\n');
+      const blob = new Blob([chatText], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      chrome.downloads.download({ url: url, filename: 'assistant_chat.txt' });
+    });
+  }
+
+  const data = await chrome.storage.local.get(['astHistory', 'astLastUpdate', 'astLastUrl', 'astChatTimerDelay']);
+  if (data.astChatTimerDelay !== undefined) {
+    astChatTimerDelay = data.astChatTimerDelay;
+    if (timerSelect) timerSelect.value = astChatTimerDelay;
+  }
+  
+  if (data.astHistory && data.astHistory.length > 0) {
+    const now = Date.now();
+    const lastUpdate = data.astLastUpdate || now;
+    let expired = false;
     
-    const blob = new Blob([chatText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `adsniper-chat-${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  });
+    if (astChatTimerDelay > 0) {
+      const elapsedMinutes = (now - lastUpdate) / (1000 * 60);
+      if (elapsedMinutes >= astChatTimerDelay) {
+        expired = true;
+      }
+    } else {
+      expired = true; 
+    }
+    
+    if (activeTabUrl !== data.astLastUrl && !activeTabUrl.startsWith('blob:')) {
+      expired = true;
+    }
+    
+    if (expired) {
+      astHistory = [];
+      await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl: activeTabUrl.startsWith('blob:') ? data.astLastUrl : activeTabUrl });
+    } else {
+      astHistory = data.astHistory;
+      astHistory.forEach(msg => {
+        appendAstMessage(msg.role, msg.content);
+      });
+      astLastUrl = activeTabUrl.startsWith('blob:') ? data.astLastUrl : activeTabUrl;
+    }
+  } else {
+    astHistory = [];
+    astLastUrl = activeTabUrl.startsWith('blob:') ? data.astLastUrl : activeTabUrl;
+    await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl });
+  }
 }
 
 function appendAstMessage(role, text) {
   const container = document.getElementById('ast-chat-history');
-  const wrapper = document.createElement('div');
-  wrapper.className = `ast-message ${role === 'user' ? 'user-msg' : 'bot-msg'}`;
-  
-  const contentDiv = document.createElement('div');
-  contentDiv.className = 'ast-message-content';
-  contentDiv.innerHTML = formatAIOutput(text);
-  wrapper.appendChild(contentDiv);
-  
-  if (role === 'bot') {
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'ast-copy-btn';
-    copyBtn.textContent = 'Copy';
-    copyBtn.onclick = () => {
-      navigator.clipboard.writeText(contentDiv.innerText || contentDiv.textContent);
-      copyBtn.textContent = 'Copied!';
-      setTimeout(() => copyBtn.textContent = 'Copy', 2000);
-    };
-    wrapper.appendChild(copyBtn);
-  }
-  
-  container.appendChild(wrapper);
+  const div = document.createElement('div');
+  div.className = 'ast-message ' + (role === 'user' ? 'user-msg' : 'bot-msg');
+  div.innerHTML = formatAIOutput(text);
+  container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-  return contentDiv;
+  return div;
 }
 
 async function handleAstSend() {
@@ -1658,67 +1707,66 @@ async function handleAstSend() {
   const botDiv = appendAstMessage('bot', '');
   startThinkingAnimation(botDiv);
   
-  if (!window.GeminiNanoClient) {
-    stopThinkingAnimation();
-    botDiv.innerHTML = '<p style="color:var(--red);">AI Client not found.</p>';
-    astIsGenerating = false;
-    document.getElementById('ast-send-btn').disabled = false;
-    return;
-  }
-  
-  const client = window.GeminiNanoClient.getInstance();
   const context = {
     activeTabId,
     activeTabUrl,
     recentRequests: allRequests,
   };
   
-  // Truncate history
-  if (astHistory.length > astContextSize * 2) {
-    astHistory = astHistory.slice(-(astContextSize * 2));
-  }
-  
-  try {
-    const result = await client.processAssistantPrompt(text, astHistory, context, 
-      (tokenChunk) => {
-        stopThinkingAnimation();
-        botDiv.innerHTML = formatAIOutput(tokenChunk);
-        const container = document.getElementById('ast-chat-history');
-        container.scrollTop = container.scrollHeight;
-      },
-      (stats) => {
-        document.getElementById('ast-token-count').textContent = `${stats.tokensIn + stats.tokensOut} / ${stats.maxTokens}`;
-        document.getElementById('ast-speed').textContent = `${stats.speed} t/s`;
-      }
-    );
-    
-    stopThinkingAnimation();
-    botDiv.innerHTML = formatAIOutput(result.reply || 'Action completed.');
-    
-    astHistory.push({ role: 'user', content: text });
-    astHistory.push({ role: 'assistant', content: result.reply });
-    
-    // Check if this was a summarise request that extracted content
-    if (result.actionExecuted && result.actionExecuted.tool === 'tool_extract_clean_content' && result.actionExecuted.success) {
-      const content = (result.actionExecuted.result && result.actionExecuted.result.content) ? result.actionExecuted.result.content : result.actionExecuted.report;
-      if (content) {
-         const html = `<!DOCTYPE html><html><head><title>Cleaned Page</title><style>body{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:1rem;line-height:1.6;font-size:18px;color:#333;background:#f9f9f9;}</style></head><body><h1>Extracted Content</h1>${content.replace(/\n/g, '<br>')}</body></html>`;
-         const blob = new Blob([html], { type: 'text/html' });
-         const url = URL.createObjectURL(blob);
-         chrome.tabs.create({ url });
-      }
-    }
-  } catch (err) {
-    stopThinkingAnimation();
-    botDiv.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
-  }
-  
-  astIsGenerating = false;
-  document.getElementById('ast-send-btn').disabled = false;
-  const container = document.getElementById('ast-chat-history');
-  container.scrollTop = container.scrollHeight;
-}
+  astHistory.push({ role: 'user', content: text });
+  astHistory.push({ role: 'bot', content: '' });
+  await chrome.storage.local.set({ astHistory, astLastUpdate: Date.now(), astLastUrl });
 
+  const contextTurnsSpan = document.getElementById('ast-context-turns');
+  if (contextTurnsSpan) {
+    contextTurnsSpan.textContent = astHistory.length + ' turns';
+  }
+  
+  const chunkListener = (msg) => {
+    if (msg.type === 'AI_CHUNK') {
+      stopThinkingAnimation();
+      botDiv.innerHTML = formatAIOutput(msg.chunk);
+      const container = document.getElementById('ast-chat-history');
+      container.scrollTop = container.scrollHeight;
+    } else if (msg.type === 'AI_STATS') {
+      const tCount = document.getElementById('ast-token-count');
+      const sCount = document.getElementById('ast-speed');
+      if (tCount) tCount.textContent = msg.stats.tokensIn + msg.stats.tokensOut + ' / ' + msg.stats.maxTokens;
+      if (sCount) sCount.textContent = msg.stats.speed + ' t/s';
+    } else if (msg.type === 'AI_COMPLETE') {
+      stopThinkingAnimation();
+      botDiv.innerHTML = formatAIOutput(msg.reply);
+      finishGeneration();
+    } else if (msg.type === 'AI_ERROR') {
+      stopThinkingAnimation();
+      botDiv.innerHTML = '<p style="color:var(--red);">' + formatAIOutput(msg.error) + '</p>';
+      finishGeneration();
+    }
+  };
+  
+  chrome.runtime.onMessage.addListener(chunkListener);
+  
+  chrome.runtime.sendMessage({ 
+    type: 'START_BACKGROUND_AI', 
+    payload: { text, astHistory, context }
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      stopThinkingAnimation();
+      botDiv.innerHTML = '<p style="color:var(--red);">Background worker unavailable.</p>';
+      finishGeneration();
+    }
+  });
+  
+  function finishGeneration() {
+    astIsGenerating = false;
+    document.getElementById('ast-send-btn').disabled = false;
+    chrome.runtime.onMessage.removeListener(chunkListener);
+    if (astHistory.length > astContextSize * 2) {
+      astHistory = astHistory.slice(-(astContextSize * 2));
+      chrome.storage.local.set({ astHistory, astLastUpdate: Date.now() });
+    }
+  }
+}
 // ==========================================
 // LISTS PANEL (SCRATCHPAD & TODOS)
 // ==========================================
@@ -1805,30 +1853,30 @@ async function initListsPanel() {
     renderTodos();
   });
 
-  // MCP Event Listeners
-  window.addEventListener('AST_SCRATCHPAD_UPDATE', (e) => {
-    const { content, append } = e.detail;
-    if (append && scratchpad.value) {
-      scratchpad.value += '\n\n' + content;
-    } else {
-      scratchpad.value = content;
+    // MCP Event Listeners
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'AST_SCRATCHPAD_UPDATE') {
+      const { content, append } = msg.payload;
+      if (append && scratchpad.value) {
+        scratchpad.value += '\n\n' + content;
+      } else {
+        scratchpad.value = content;
+      }
     }
-    chrome.storage.local.set({ astScratchpad: scratchpad.value });
-  });
-
-  window.addEventListener('AST_TODO_ADD', (e) => {
-    const { task, description, eta } = e.detail;
-    if (task) {
-      todos.push({ 
-        id: Date.now(), 
-        text: task, 
-        done: false, 
-        createdAt: new Date().toISOString(), 
-        description: description || '', 
-        eta: eta || null 
-      });
-      chrome.storage.local.set({ astTodos: todos });
-      renderTodos();
+    
+    if (msg.type === 'AST_TODO_ADD') {
+      const { task, description, eta } = msg.payload;
+      if (task) {
+        todos.push({ 
+          id: Date.now(), 
+          text: task, 
+          done: false, 
+          createdAt: new Date().toISOString(), 
+          description: description || '', 
+          eta: eta || null 
+        });
+        renderTodos();
+      }
     }
   });
 

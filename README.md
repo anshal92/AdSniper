@@ -37,7 +37,7 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
 - **Strict Action-Only Prompt**: This engine is constrained to only emit MCP tool JSON—it never produces conversational text. Optimized for deterministic ad blocking commands.
 - **Autonomous Model Context Protocol (MCP) Tools**:
   - `tool_inspect_requests`: Produces instant forensic ad & tracker audit reports, decoding exfiltrated query parameters (Publisher IDs, Auction Bids, User Tracking UUIDs, Topics/FLEDGE data).
-  - `tool_remove_overlay`: Detects and scrubs anti-adblock modals, paywalls, sticky video overlays, and unfreezes locked body scrolling.
+  - `tool_remove_overlay`: Detects and scrubs anti-adblock modals, Distraction free Reading, sticky video overlays, and unfreezes locked body scrolling.
   - `tool_add_block_rule`: Synthesizes dynamic DeclarativeNetRequest block rules from natural language (e.g. *"Block analytics.foo.com"*).
   - `tool_hide_element_css`: Generates and injects custom CSS selector rules (`display: none !important`) to eliminate annoying banners and clutter.
   - `tool_extract_clean_content`: Extracts clean, readable article text stripped of sidebars, ads, and widgets.
@@ -50,15 +50,23 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
   - 🟡 **Pulsing Yellow**: Initializing or model downloading in Chrome components.
   - 🔴 **Static Red**: AI engine offline / unavailable.
 
-#### ✨ Personal Assistant (Conversational Engine)
-- **Dedicated Chat Interface**: A separate "✨ Personal Assistant" tab with a full chat history UI, message bubbles, and streaming responses.
+#### 🤖 Personal Assistant (Conversational Engine)
+- **Dedicated Chat Interface**: A separate "💬 Personal Assistant" tab with a full chat history UI, message bubbles, and streaming responses.
 - **Conversational System Prompt**: Uses a higher-temperature (0.7) session tuned for natural conversation—answering questions, performing calculations, fixing grammar, and summarizing text—without blindly triggering tools.
+- **Universal Page Summarization**: Extract and summarize clean text from *any* HTML page. Because the Assistant reads directly from your browser's local DOM, it works on **Distraction free Readinged articles**, **local files**, and **Gmail emails**!
+- **Data Extraction**: Quickly fetch specific on-page data—like customer care numbers, author names, or social media links—by just asking the assistant.
+- **100% Private & Local**: Since Gemini Nano runs on-device, no page data or email contents are breached or sent to external servers. Your context remains strictly yours (unless Google updates the underlying Chrome AI model with new tracking telemetry in the future).
 - **Live LLM Telemetry Dashboard**:
   - **Token Counter**: Displays `Input + Output / 32,768` context utilization in real time using `session.countPromptTokens()`.
   - **Generation Speed**: Shows tokens per second (`t/s`) during streaming.
-  - **Adjustable Context Window**: Configurable conversation history retention (default: last 10 turns, max 50).
-- **Quick-Action Feature Chips**: One-click prompt templates for common tasks: 📝 Summarise Page, 🧮 Calculator, ✍️ Grammar Fixer, 🗒️ Save Note, ✅ Add Todo.
+  - **Chat Timer Context Logic**: An adjustable chat timer automatically wipes the context history (or resets immediately upon URL change) to prevent stale data cross-contamination between pages.
+- **Quick-Action Feature Chips**: One-click prompt templates for common tasks: 📝 Summarise Page, 📌 Save Note, ✅ Add Todo.
 - **MCP Tools (Selective)**: The assistant can call `tool_execute_js_script`, `tool_add_scratchpad`, and `tool_add_todo`—but **only when explicitly requested**. Normal questions are answered conversationally.
+
+### ⚠️ Limitations & Disclaimers
+- **Cannot Block Everything**: The extension relies heavily on declarative rules and DOM mutation. Highly obfuscated or dynamically re-encrypted ads (e.g. YouTube video-stream ads) may not be perfectly blocked.
+- **Desktop Only**: Chrome's Built-in AI (Gemini Nano) and extension architecture are currently tailored for desktop browsers; not supported on Chrome for Mobile.
+- **Context Corruption & Hallucinations**: Because AI logic is probabilistic and context windows are limited (32k tokens max), extreme payloads may cause context corruption, resulting in hallucinations or incomplete extractions. Always verify extracted customer care numbers or critical info.
 
 ### 🛡️ 2. Surgical Ad & Tracker Blocker
 - **Declarative Rule Engine**: Built on Chrome's native `declarativeNetRequest` (DNR) API for lightning-fast request blocking with minimal memory and CPU overhead.

@@ -367,3 +367,5 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 - Fixed 'Summarize my Day' output leaking raw HTML by replacing it with standard markdown and added strikethrough parsing support to the AI message renderer.
 
 - Fixed an issue where the AI would hallucinate the Day Summary repeatedly when trying to extract page content, caused by context contamination in Gemini Nano's prompt.
+- Rebranded 'Paywall' to 'Distraction free Reading' across UI elements.
+- Offloaded AI processing to service-worker.js to allow Assistant queries to complete in the background even if the popup is closed.

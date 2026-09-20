@@ -846,9 +846,8 @@ The tool returns the tasks already categorized and pre-formatted into an object.
         
         try {
           const extractedData = actionResult.text ? actionResult.text : actionResult.report;
-          let summaryPrompt = `${GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT}\n\n`;
-          summaryPrompt += `[System Context - Data extracted from page]:\n"""\n${extractedData.slice(0, 16000)}\n"""\n\nUser: ${promptText}\nAssistant: (Synthesizing answer based ONLY on the extracted data) `;
-          let summaryResponse = '';
+            let summaryPrompt = `You are a helpful AI assistant. The user requested: "${promptText}".\n\nBased ONLY on the following extracted data, provide the answer or summary. Make it proportional to the content size (max 2000 words). Do NOT use code blocks.\n\n[Extracted Data]:\n"""\n${extractedData.slice(0, 16000)}\n"""\n\nAnswer/Summary:`;
+            let summaryResponse = '';
           if (typeof session.promptStreaming === 'function' && onToken) {
             const stream2 = session.promptStreaming(summaryPrompt);
             for await (const rawChunk of stream2) {
@@ -1563,6 +1562,9 @@ The tool returns the tasks already categorized and pre-formatted into an object.
 // Attach to window for global popup access
 if (typeof window !== 'undefined') {
   window.GeminiNanoClient = GeminiNanoClient;
+}
+if (typeof self !== 'undefined') {
+  self.GeminiNanoClient = GeminiNanoClient;
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = GeminiNanoClient;
