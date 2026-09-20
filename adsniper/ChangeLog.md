@@ -356,3 +356,14 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 - Added a quick navigation Index to README.md.
 - Greatly simplified the 'How to Enable Chrome Built-in AI' section in README.md to make it highly user-friendly.
 - Reordered features in README.md to bump Scratchpad & Todo Lists to the 5th spot.
+
+- Fixed an issue where the AI content extraction returned '0 words' on sites like India Today due to aggressive 'aria-hidden' attribute stripping.
+- Improved readability of extracted text by adding spacing between block elements and increased character limit to handle larger articles.
+
+- Improved 'Summarize my Day' output in Personal Assistant by explicitly formatting as Markdown, bypassing AI summarization which was degrading the formatting.
+- Added a 'Copy' button on AI messages in Personal Assistant for easy text copying.
+- Added a 'Download Chat' button to export the assistant chat history as a text file.
+
+- Fixed 'Summarize my Day' output leaking raw HTML by replacing it with standard markdown and added strikethrough parsing support to the AI message renderer.
+
+- Fixed an issue where the AI would hallucinate the Day Summary repeatedly when trying to extract page content, caused by context contamination in Gemini Nano's prompt.

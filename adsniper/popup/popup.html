@@ -1326,6 +1326,7 @@
       background: var(--bg);
     }
     .ast-message {
+      position: relative;
       font-family: 'JetBrains Mono', monospace;
       padding: 8px 12px;
       border-radius: 8px;
@@ -1334,6 +1335,22 @@
       max-width: 85%;
       word-wrap: break-word;
     }
+    .ast-copy-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 10px;
+      padding: 2px 6px;
+      opacity: 0;
+      transition: all 0.2s;
+    }
+    .ast-message:hover .ast-copy-btn { opacity: 1; }
+    .ast-copy-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(124,106,255,.1); }
     .ast-message ul.ai-list, .ast-message ol.ai-num-list {
       margin-left: 16px;
       margin-top: 4px;
@@ -1799,6 +1816,7 @@
     <button class="ast-feature-btn" id="ast-btn-grammar">✍️ Grammar Fixer</button>
     <button class="ast-feature-btn" id="ast-btn-note">🗒️ Save Note</button>
     <button class="ast-feature-btn" id="ast-btn-todo">✅ Add Todo</button>
+    <button class="ast-feature-btn" id="ast-btn-download-chat">💾 Download Chat</button>
   </div>
 
   <div id="ast-chat-history" class="ast-chat-history">

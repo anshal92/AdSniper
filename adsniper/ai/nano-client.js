@@ -832,8 +832,7 @@ The tool returns the tasks already categorized and pre-formatted into an object.
       // If the tool extracted text or raw JSON data, we need a second pass to synthesize it into a human-readable answer
       const needsSynthesis = actionResult && actionResult.success && (
         (actionResult.tool === 'tool_extract_clean_content' && actionResult.text) ||
-        (actionResult.tool === 'tool_execute_js_script' && actionResult.report) ||
-        (actionResult.tool === 'tool_get_todos' && actionResult.report)
+        (actionResult.tool === 'tool_execute_js_script' && actionResult.report)
       );
 
       if (needsSynthesis) {
@@ -847,8 +846,8 @@ The tool returns the tasks already categorized and pre-formatted into an object.
         
         try {
           const extractedData = actionResult.text ? actionResult.text : actionResult.report;
-          const summaryPrompt = `${fullPrompt}${fullResponse}\n\n[SYSTEM]: Action successful. Extracted data:\n"""\n${extractedData.slice(0, 8000)}\n"""\nPlease provide the requested answer based on this data. If the data contains links or specific values, list them exactly as they appear in the data. Do NOT output any JSON tool actions. Answer directly in markdown.`;
-          
+          let summaryPrompt = `${GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT}\n\n`;
+          summaryPrompt += `[System Context - Data extracted from page]:\n"""\n${extractedData.slice(0, 16000)}\n"""\n\nUser: ${promptText}\nAssistant: (Synthesizing answer based ONLY on the extracted data) `;
           let summaryResponse = '';
           if (typeof session.promptStreaming === 'function' && onToken) {
             const stream2 = session.promptStreaming(summaryPrompt);
@@ -1494,7 +1493,45 @@ The tool returns the tasks already categorized and pre-formatted into an object.
             else report["🟢 No Hurry (>7 days or no ETA)"].push(taskStr);
           });
 
-          return { success: true, tool: toolName, message: 'Fetched Tasks', report: JSON.stringify(report, null, 2) };
+          let markdownReport = `### 📅 Day Summary\n\n`;
+          let hasTasks = false;
+          
+          if (report["🔥 Burning (overdue/due today)"].length > 0) {
+            markdownReport += `### 🔥 Burning (overdue/due today)\n`;
+            report["🔥 Burning (overdue/due today)"].forEach(t => markdownReport += `* ${t}\n`);
+            markdownReport += `\n`;
+            hasTasks = true;
+          }
+          if (report["🔴 High Priority (1-3 days)"].length > 0) {
+            markdownReport += `### 🔴 High Priority (1-3 days)\n`;
+            report["🔴 High Priority (1-3 days)"].forEach(t => markdownReport += `* ${t}\n`);
+            markdownReport += `\n`;
+            hasTasks = true;
+          }
+          if (report["🟡 Low Priority (4-7 days)"].length > 0) {
+            markdownReport += `### 🟡 Low Priority (4-7 days)\n`;
+            report["🟡 Low Priority (4-7 days)"].forEach(t => markdownReport += `* ${t}\n`);
+            markdownReport += `\n`;
+            hasTasks = true;
+          }
+          if (report["🟢 No Hurry (>7 days or no ETA)"].length > 0) {
+            markdownReport += `### 🟢 No Hurry (>7 days or no ETA)\n`;
+            report["🟢 No Hurry (>7 days or no ETA)"].forEach(t => markdownReport += `* ${t}\n`);
+            markdownReport += `\n`;
+            hasTasks = true;
+          }
+          if (report["✅ Complete"].length > 0) {
+            markdownReport += `### ✅ Complete\n`;
+            report["✅ Complete"].forEach(t => markdownReport += `* ~~${t}~~\n`);
+            markdownReport += `\n`;
+            hasTasks = true;
+          }
+          
+          if (!hasTasks) {
+            markdownReport += `*No tasks found in your Todo list.*`;
+          }
+
+          return { success: true, tool: toolName, message: 'Fetched Tasks', report: markdownReport };
         } catch (e) {
           return { success: false, error: e.message };
         }

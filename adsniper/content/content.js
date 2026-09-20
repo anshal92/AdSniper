@@ -730,11 +730,17 @@ function extractCleanArticleText() {
   if (!container) return { text: '', wordCount: 0 };
 
   const clone = container.cloneNode(true);
-  clone.querySelectorAll('script, style, noscript, nav, header, footer, aside, iframe, [aria-hidden="true"]').forEach((n) => n.remove());
+  clone.querySelectorAll('script, style, noscript, nav, header, footer, aside, iframe').forEach((n) => n.remove());
 
-  const text = (clone.innerText || clone.textContent || '').replace(/\s+/g, ' ').trim();
+  // Insert spaces around block elements so textContent doesn't mash words together
+  clone.querySelectorAll('p, div, br, h1, h2, h3, h4, h5, h6, li, section').forEach(el => {
+    el.prepend(document.createTextNode(' '));
+    el.append(document.createTextNode(' '));
+  });
+
+  const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
   const words = text ? text.split(/\s+/).length : 0;
-  return { text: text.slice(0, 4000), wordCount: words };
+  return { text: text.slice(0, 12000), wordCount: words };
 }
 
 /**

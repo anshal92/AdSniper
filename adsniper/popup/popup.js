@@ -918,6 +918,9 @@ function formatAIOutput(text) {
   // Italics *italic*
   safe = safe.replace(/(^|[^\*])\*([^\*\n]+)\*([^\*]|$)/g, '$1<em>$2</em>$3');
 
+  // Strikethrough ~~strike~~
+  safe = safe.replace(/~~([^~]+)~~/g, '<strike>$1</strike>');
+
   // Headings
   safe = safe.replace(/^###?\s+(.+)$/gm, '<div class="ai-heading">$1</div>');
 
@@ -1588,16 +1591,56 @@ async function initPersonalAssistant() {
     input.value = 'Add the following to my todo list: ';
     input.focus();
   });
+  document.getElementById('ast-btn-download-chat').addEventListener('click', () => {
+    const messages = document.querySelectorAll('.ast-message');
+    let chatText = "AdSniper Chat History\n=====================\n\n";
+    messages.forEach(msg => {
+      const isUser = msg.classList.contains('user-msg');
+      const isBot = msg.classList.contains('bot-msg');
+      if (isUser) {
+        chatText += "You:\n" + (msg.innerText || msg.textContent).trim() + "\n\n";
+      } else if (isBot) {
+        const contentDiv = msg.querySelector('.ast-message-content');
+        const text = contentDiv ? (contentDiv.innerText || contentDiv.textContent) : (msg.innerText || msg.textContent).replace(/Copy$/, '').replace(/Copied!$/, '');
+        chatText += "Assistant:\n" + text.trim() + "\n\n";
+      }
+    });
+    
+    const blob = new Blob([chatText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `adsniper-chat-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 }
 
 function appendAstMessage(role, text) {
   const container = document.getElementById('ast-chat-history');
-  const div = document.createElement('div');
-  div.className = `ast-message ${role === 'user' ? 'user-msg' : 'bot-msg'}`;
-  div.innerHTML = formatAIOutput(text);
-  container.appendChild(div);
+  const wrapper = document.createElement('div');
+  wrapper.className = `ast-message ${role === 'user' ? 'user-msg' : 'bot-msg'}`;
+  
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'ast-message-content';
+  contentDiv.innerHTML = formatAIOutput(text);
+  wrapper.appendChild(contentDiv);
+  
+  if (role === 'bot') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'ast-copy-btn';
+    copyBtn.textContent = 'Copy';
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(contentDiv.innerText || contentDiv.textContent);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+    };
+    wrapper.appendChild(copyBtn);
+  }
+  
+  container.appendChild(wrapper);
   container.scrollTop = container.scrollHeight;
-  return div;
+  return contentDiv;
 }
 
 async function handleAstSend() {
