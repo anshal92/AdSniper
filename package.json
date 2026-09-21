@@ -1,0 +1,25 @@
+{
+  "name": "TestProject",
+  "version": "1.0.0",
+  "description": "> **Surgical Ad Blocking, Cookie Control, On-Device AI Personal Assistant (Gemini Nano), Scratchpad & Todo Lists, and Gamified Ad Sniping for Chrome (Manifest V3)**",
+  "main": "test.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint adsniper/**/*.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anshal92/AdSniper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/anshal92/AdSniper/issues"
+  },
+  "homepage": "https://github.com/anshal92/AdSniper#readme",
+  "devDependencies": {
+    "@babel/eslint-parser": "^7.29.9",
+    "eslint": "^7.32.0"
+  }
+}

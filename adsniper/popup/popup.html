@@ -29,6 +29,9 @@
 
     body {
       width: 575px;
+      height: 550px;
+      display: flex;
+      flex-direction: column;
       font-family: 'Segoe UI', system-ui, sans-serif;
       font-size: 13px;
       background: var(--bg);
@@ -155,7 +158,13 @@
        PANELS
     ═══════════════════════════════════════ */
     .panel { display: none; }
-    .panel.active { display: block; }
+    .panel.active { 
+      display: block; 
+      flex: 1; 
+      min-height: 0; 
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
 
     /* ═══════════════════════════════════════
        CONTROL BAR (Ad Blocker)
@@ -1265,7 +1274,6 @@
     #panel-assistant {
       display: none;
       flex-direction: column;
-      height: calc(100vh - 85px);
     }
     #panel-assistant.active {
       display: flex;
@@ -1285,14 +1293,17 @@
       align-items: center;
       gap: 4px;
     }
-    .ast-history-input {
-      width: 35px;
+    .ast-history-input, .ast-timer-select {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 4px;
       padding: 2px 4px;
       font-size: 11px;
+      outline: none;
+    }
+    .ast-timer-select {
+      cursor: pointer;
     }
     .assistant-features-bar {
       display: flex;
@@ -1448,7 +1459,7 @@
 
     /* ── LISTS PANEL ── */
     #panel-lists {
-      height: calc(100vh - 85px);
+      /* Flex properties handled by .panel.active */
     }
     .lists-container {
       display: flex;
@@ -1709,7 +1720,7 @@
       <div class="ai-hints-title">💡 Prompt Examples (click to use):</div>
       <div class="ai-hints-list">
         <span class="ai-hint-tag" data-prompt="Block all tracking and telemetry requests on this page">🚫 Block all trackers</span>
-        <span class="ai-hint-tag" data-prompt="Remove anti-adblock modals, overlays, and restore scrolling">🧹 Remove overlays & paywalls</span>
+        <span class="ai-hint-tag" data-prompt="Remove anti-adblock modals, overlays, and restore scrolling">🔓 Remove overlays & enable Distraction Free Reading</span>
         <span class="ai-hint-tag" data-prompt="I need all anchor links from the page">🔗 Extract anchor links</span>
         <span class="ai-hint-tag" data-prompt="Get all floating boxes and popup fields from the page">🪟 Find floating boxes & popups</span>
         <span class="ai-hint-tag" data-prompt="Hide floating videos and sticky promo banners on this page">👁️ Hide floating videos</span>
@@ -1723,9 +1734,8 @@
       <button class="ai-chip" data-prompt="Audit trackers and network calls on this page">🎯 Audit Trackers</button>
       <button class="ai-chip" data-prompt="I need all anchor links from the page">🔗 Anchor Links</button>
       <button class="ai-chip" data-prompt="Get all floating boxes and popup fields from the page">🪟 Floating Boxes</button>
-      <button class="ai-chip" data-prompt="Remove anti-adblock overlays and paywalls on this page">🧹 Kill Overlays</button>
-      <button class="ai-chip" data-prompt="Extract clean readable article content without ads">📝 Reader View</button>
-    </div>
+      <button class="ai-chip" data-prompt="Remove anti-adblock overlays and enable Distraction Free Reading">🧹 Kill Overlays</button>
+      </div>
 
     <!-- Fixed & Formatted response / action card container -->
     <div id="ai-response-box" class="ai-response-box">
@@ -1803,18 +1813,28 @@
       <span class="stat-label">Speed:</span>
       <span id="ast-speed">0 t/s</span>
     </div>
-    <div class="stat-item" title="Conversation turns retained">
-      <span class="stat-label">History:</span>
-      <input type="number" id="ast-context-size" value="10" min="1" max="50" class="ast-history-input">
+    <div class="stat-item" title="Chat History Turns">
+      <span class="stat-label">Context:</span>
+      <span id="ast-context-turns">0 turns</span>
+    </div>
+    <div class="stat-item" title="Time before chat is erased">
+      <span class="stat-label">Chat Timer:</span>
+      <select id="ast-chat-timer" class="ast-timer-select">
+        <option value="0">Immediately</option>
+        <option value="1">1 min</option>
+        <option value="5">5 min</option>
+        <option value="10">10 min</option>
+        <option value="15">15 min</option>
+        <option value="30">30 min</option>
+        <option value="-1" disabled>Unlimited (Context limited)</option>
+      </select>
     </div>
   </div>
 
   <div class="assistant-features-bar">
     <button class="ast-feature-btn" id="ast-btn-summarize-day">📅 Summarize my Day</button>
     <button class="ast-feature-btn" id="ast-btn-summarize">📝 Summarise Page</button>
-    <button class="ast-feature-btn" id="ast-btn-calc">🧮 Calculator</button>
-    <button class="ast-feature-btn" id="ast-btn-grammar">✍️ Grammar Fixer</button>
-    <button class="ast-feature-btn" id="ast-btn-note">🗒️ Save Note</button>
+    <button class="ast-feature-btn" id="ast-btn-note">📝 Save Note</button>
     <button class="ast-feature-btn" id="ast-btn-todo">✅ Add Todo</button>
     <button class="ast-feature-btn" id="ast-btn-download-chat">💾 Download Chat</button>
   </div>

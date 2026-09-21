@@ -14,7 +14,7 @@ AdSniper is a privacy-first Chrome extension built to give users surgical contro
 | ✨ **Personal Assistant** | Conversational on-device AI chat (Gemini Nano) with adjustable context window, live token/speed telemetry, quick-action feature chips, and selective MCP tool execution |
 | 📋 **Lists** | Side-by-side persistent Scratchpad notepad and Todo List task manager, writable by both the user and the AI assistant |
 | 🍪 **Cookie Editor** | View, edit, lock (prevent page from changing), and delete cookies for the current tab |
-| 🤖 **Gemini Nano AI (AdBlocker)** | On-device Built-in AI (Chrome Prompt API) running 100% locally; natural language ad control, forensic tracker audits, overlay & paywall removal, and autonomous MCP tools |
+| 🤖 **Gemini Nano AI (AdBlocker)** | On-device Built-in AI (Chrome Prompt API) running 100% locally; natural language ad control, forensic tracker audits, overlay & Distraction free Reading removal, and autonomous MCP tools |
 | 🔫 **Sniping Mode** | Interactive Canvas game that temporarily pauses blocking, scans page ads, and converts them into flying bird targets |
 
 It uses **Manifest V3** exclusively. Network blocking is performed natively by Chrome's `declarativeNetRequest` (DNR) engine, not `webRequest` blocking. The DOM is manipulated via an isolated content script. The AI runs directly in the browser's GPU/VRAM via Chrome's Built-in AI, executing lightweight Model Context Protocol (MCP) actions through two dedicated sessions.
@@ -263,7 +263,7 @@ adsniper/
 | `scanAndRemoveAdIframes()` | Snapshots + `iframe.remove()` on matches |
 | `processNewNode(node)` | MutationObserver callback for new DOM nodes |
 | `launchSnipingGame()` | Dynamically loads sniper-game.js, calls `AdSniperGame.launchGame()` |
-| `removeIntrusiveOverlays()` | Detects & removes anti-adblock modals, floating video ads, paywalls, restores scrolling |
+| `removeIntrusiveOverlays()` | Detects & removes anti-adblock modals, floating video ads, Distraction free Reading, restores scrolling |
 | `hideBySelector(selector)` | Applies `display:none !important` to AI-generated CSS selector |
 | `extractCleanArticleText()` | Extracts readable article text without ads/sidebars |
 
@@ -399,7 +399,7 @@ Gemini Nano runs with a concise system prompt injecting the AdSniper tool schema
 
 ```text
 You are AdSniper AI, an on-device Chrome extension assistant.
-You help users inspect network traffic, eliminate annoying ads/trackers, remove paywalls and popups, and control the page.
+You help users inspect network traffic, eliminate annoying ads/trackers, remove Distraction free Reading and popups, and control the page.
 
 You have access to the following MCP Actions:
 - tool_add_block_rule(pattern, reason): Adds a DeclarativeNetRequest block rule (e.g. pattern="||tracker.example.com").
@@ -441,7 +441,7 @@ To eliminate latency and prevent model non-compliance, natural language inputs a
 
 | User Input Pattern | Triggered Tool | Action Executed |
 |---|---|---|
-| `kill/remove/clear popups/overlays/modals/paywalls` | `tool_remove_overlay` | Injects overlay cleanup, strips high-z modals, unlocks scroll |
+| `kill/remove/clear popups/overlays/modals/Distraction free Reading` | `tool_remove_overlay` | Injects overlay cleanup, strips high-z modals, unlocks scroll |
 | `block/stop/remove on click new tab / popup tabs` | `tool_toggle_feature` | Activates `new_tab_block` DNR rules (IDs 40001–49999) |
 | `block all ads / mass block` | `tool_toggle_feature` | Activates `mass_block` DNR rules (IDs 50001+) |
 | `reader view / clean article / extract content` | `tool_extract_clean_content` | Extracts readability text without ads/sidebars |

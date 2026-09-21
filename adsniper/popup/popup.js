@@ -85,8 +85,10 @@ window.toggleMassBlock = toggleMassBlock;
 document.addEventListener('DOMContentLoaded', async () => {
   // Identify active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  activeTabId  = tab.id;
-  activeTabUrl = tab.url;
+  if (tab) {
+    activeTabId  = tab.id;
+    activeTabUrl = tab.url;
+  }
 
   // Load ad patterns from storage (fetched by SW on install)
   const stored = await chrome.storage.local.get(['adHosts', 'adPatterns']);
@@ -1504,7 +1506,9 @@ async function handleSnipingGame() {
 // PERSONAL ASSISTANT
 // ==========================================
 let astHistory = [];
-let astContextSize = 10;
+let astContextSize = 50;
+let astChatTimerDelay = 10;
+let astLastUrl = '';
 let astIsGenerating = false;
 let astThinkingTimer = null;
 
@@ -1547,15 +1551,46 @@ function stopThinkingAnimation() {
 async function initPersonalAssistant() {
   const sendBtn = document.getElementById('ast-send-btn');
   const input = document.getElementById('ast-input');
-  const historyInput = document.getElementById('ast-context-size');
   
-  historyInput.addEventListener('change', (e) => {
-    let val = parseInt(e.target.value, 10);
-    if (isNaN(val) || val < 1) val = 1;
-    if (val > 50) val = 50;
-    astContextSize = val;
-    e.target.value = val;
-  });
+  const timerSelect = document.getElementById('ast-chat-timer');
+  if (timerSelect) {
+    timerSelect.value = astChatTimerDelay;
+    timerSelect.addEventListener('change', (e) => {
+      astChatTimerDelay = parseInt(e.target.value, 10);
+      chrome.storage.local.set({ astChatTimerDelay });
+      if (astChatTimerDelay === 0) {
+        astHistory = [];
+        chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now() });
+        document.getElementById('ast-chat-history').innerHTML = '';
+      }
+    });
+  }
+
+  const placeholderHints = [
+    'Ask assistant to draft email...',
+    'Summarize this page...',
+    'Fix grammar on this page...',
+    'What is the helpline number?',
+    'Get me social media links...'
+  ];
+  let hintIndex = 0;
+  setInterval(() => {
+    if (!astIsGenerating && input) {
+      input.placeholder = placeholderHints[hintIndex];
+      hintIndex = (hintIndex + 1) % placeholderHints.length;
+    }
+  }, 3000);
+
+  const historyInput = document.getElementById('ast-context-size');
+  if (historyInput) {
+    historyInput.addEventListener('change', (e) => {
+      let val = parseInt(e.target.value, 10);
+      if (isNaN(val) || val < 1) val = 1;
+      if (val > 50) val = 50;
+      astContextSize = val;
+      e.target.value = val;
+    });
+  }
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1566,54 +1601,87 @@ async function initPersonalAssistant() {
   
   sendBtn.addEventListener('click', handleAstSend);
 
-  // Feature Buttons
-  document.getElementById('ast-btn-summarize-day').addEventListener('click', () => {
-    input.value = 'Summarize my day';
-    handleAstSend();
-  });
-  document.getElementById('ast-btn-summarize').addEventListener('click', () => {
-    input.value = 'Please extract the clean readable content from this page and summarise it for me.';
-    handleAstSend();
-  });
-  document.getElementById('ast-btn-calc').addEventListener('click', () => {
-    input.value = 'Calculate: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-grammar').addEventListener('click', () => {
-    input.value = 'Fix the grammar in the following text: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-note').addEventListener('click', () => {
-    input.value = 'Save the following to my scratchpad: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-todo').addEventListener('click', () => {
-    input.value = 'Add the following to my todo list: ';
-    input.focus();
-  });
-  document.getElementById('ast-btn-download-chat').addEventListener('click', () => {
-    const messages = document.querySelectorAll('.ast-message');
-    let chatText = "AdSniper Chat History\n=====================\n\n";
-    messages.forEach(msg => {
-      const isUser = msg.classList.contains('user-msg');
-      const isBot = msg.classList.contains('bot-msg');
-      if (isUser) {
-        chatText += "You:\n" + (msg.innerText || msg.textContent).trim() + "\n\n";
-      } else if (isBot) {
-        const contentDiv = msg.querySelector('.ast-message-content');
-        const text = contentDiv ? (contentDiv.innerText || contentDiv.textContent) : (msg.innerText || msg.textContent).replace(/Copy$/, '').replace(/Copied!$/, '');
-        chatText += "Assistant:\n" + text.trim() + "\n\n";
-      }
+  const btnSummarizeDay = document.getElementById('ast-btn-summarize-day');
+  if (btnSummarizeDay) {
+    btnSummarizeDay.addEventListener('click', () => {
+      input.value = 'Summarize my day';
+      handleAstSend();
     });
+  }
+  
+  const btnSummarize = document.getElementById('ast-btn-summarize');
+  if (btnSummarize) {
+    btnSummarize.addEventListener('click', () => {
+      input.value = 'Please extract the clean readable content from this page and summarise it for me.';
+      handleAstSend();
+    });
+  }
+  
+  const btnNote = document.getElementById('ast-btn-note');
+  if (btnNote) {
+    btnNote.addEventListener('click', () => {
+      input.value = 'Save this note: ';
+      input.focus();
+    });
+  }
+  
+  const btnTodo = document.getElementById('ast-btn-todo');
+  if (btnTodo) {
+    btnTodo.addEventListener('click', () => {
+      input.value = 'Add to my todo list: ';
+      input.focus();
+    });
+  }
+
+  const btnDownloadChat = document.getElementById('ast-btn-download-chat');
+  if (btnDownloadChat) {
+    btnDownloadChat.addEventListener('click', () => {
+      const chatText = astHistory.map(msg => msg.role + ': ' + msg.content).join('\n\n');
+      const blob = new Blob([chatText], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      chrome.downloads.download({ url: url, filename: 'assistant_chat.txt' });
+    });
+  }
+
+  const data = await chrome.storage.local.get(['astHistory', 'astLastUpdate', 'astLastUrl', 'astChatTimerDelay']);
+  if (data.astChatTimerDelay !== undefined) {
+    astChatTimerDelay = data.astChatTimerDelay;
+    if (timerSelect) timerSelect.value = astChatTimerDelay;
+  }
+  
+  if (data.astHistory && data.astHistory.length > 0) {
+    const now = Date.now();
+    const lastUpdate = data.astLastUpdate || now;
+    let expired = false;
     
-    const blob = new Blob([chatText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `adsniper-chat-${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  });
+    if (astChatTimerDelay > 0) {
+      const elapsedMinutes = (now - lastUpdate) / (1000 * 60);
+      if (elapsedMinutes >= astChatTimerDelay) {
+        expired = true;
+      }
+    } else {
+      expired = true; 
+    }
+    
+    if (activeTabUrl && activeTabUrl !== data.astLastUrl && !activeTabUrl.startsWith('blob:')) {
+      expired = true;
+    }
+    
+    if (expired) {
+      astHistory = [];
+      await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl: (activeTabUrl && activeTabUrl.startsWith('blob:')) ? data.astLastUrl : activeTabUrl });
+    } else {
+      astHistory = data.astHistory;
+      astHistory.forEach(msg => {
+        appendAstMessage(msg.role, msg.content);
+      });
+      astLastUrl = (activeTabUrl && activeTabUrl.startsWith('blob:')) ? data.astLastUrl : activeTabUrl;
+    }
+  } else {
+    astHistory = [];
+    astLastUrl = (activeTabUrl && activeTabUrl.startsWith('blob:')) ? data.astLastUrl : activeTabUrl;
+    await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl });
+  }
 }
 
 function appendAstMessage(role, text) {
@@ -1718,7 +1786,6 @@ async function handleAstSend() {
   const container = document.getElementById('ast-chat-history');
   container.scrollTop = container.scrollHeight;
 }
-
 // ==========================================
 // LISTS PANEL (SCRATCHPAD & TODOS)
 // ==========================================
