@@ -29,6 +29,9 @@
 
     body {
       width: 575px;
+      height: 550px;
+      display: flex;
+      flex-direction: column;
       font-family: 'Segoe UI', system-ui, sans-serif;
       font-size: 13px;
       background: var(--bg);
@@ -155,7 +158,13 @@
        PANELS
     ═══════════════════════════════════════ */
     .panel { display: none; }
-    .panel.active { display: block; }
+    .panel.active { 
+      display: block; 
+      flex: 1; 
+      min-height: 0; 
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
 
     /* ═══════════════════════════════════════
        CONTROL BAR (Ad Blocker)
@@ -1265,7 +1274,6 @@
     #panel-assistant {
       display: none;
       flex-direction: column;
-      height: calc(100vh - 85px);
     }
     #panel-assistant.active {
       display: flex;
@@ -1451,7 +1459,7 @@
 
     /* ── LISTS PANEL ── */
     #panel-lists {
-      height: calc(100vh - 85px);
+      /* Flex properties handled by .panel.active */
     }
     .lists-container {
       display: flex;

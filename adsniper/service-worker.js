@@ -13,8 +13,6 @@
 const MAX_REQUESTS_PER_TAB = 100;
 const INITIAL_RULE_ID = 1001;
 
-importScripts('ai/nano-client.js');
-
 // Source: Peter Lowe's ad-server list — plain text, one hostname per line, no headers
 const AD_HOSTS_FETCH_URL =
   'https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0&mimetype=plaintext';
@@ -512,56 +510,5 @@ async function fetchAndStoreAdPatterns() {
     console.log('[AdSniper] Loaded bundled fallback ad patterns');
   } catch (err) {
     console.warn('[AdSniper] Failed to load bundled fallback:', err.message);
-  }
-}
-
-// --- AI Background Worker ---
-let backgroundClient = null;
-
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'START_BACKGROUND_AI') {
-    runBackgroundAI(msg.payload);
-    sendResponse({ started: true });
-  }
-});
-
-async function runBackgroundAI({ text, astHistory, context }) {
-  if (!backgroundClient) {
-    if (typeof self.GeminiNanoClient !== 'undefined') {
-      backgroundClient = new self.GeminiNanoClient();
-    } else {
-      return;
-    }
-  }
-  
-  let currentBotMessage = '';
-  const saveState = () => {
-    if (astHistory.length > 0) {
-      astHistory[astHistory.length - 1].content = currentBotMessage || '';
-      chrome.storage.local.set({ astHistory, astLastUpdate: Date.now() });
-    }
-  };
-
-  try {
-    const result = await backgroundClient.processAssistantPrompt(
-      text, 
-      astHistory.slice(0, -2), 
-      context, 
-      (chunk) => {
-        currentBotMessage = chunk;
-        saveState();
-        chrome.runtime.sendMessage({ type: 'AI_CHUNK', chunk }).catch(() => {});
-      },
-      (stats) => {
-        chrome.runtime.sendMessage({ type: 'AI_STATS', stats }).catch(() => {});
-      }
-    );
-    currentBotMessage = result.reply || 'Action completed.';
-    saveState();
-    chrome.runtime.sendMessage({ type: 'AI_COMPLETE', reply: currentBotMessage, actionExecuted: result.actionExecuted }).catch(() => {});
-  } catch (err) {
-    currentBotMessage = 'Error: ' + err.message;
-    saveState();
-    chrome.runtime.sendMessage({ type: 'AI_ERROR', error: err.message }).catch(() => {});
   }
 }

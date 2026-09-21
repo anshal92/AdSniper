@@ -1,0 +1,33 @@
+{
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "webextensions": true,
+    "serviceworker": true
+  },
+  "extends": "eslint:recommended",
+  "parserOptions": {
+    "requireConfigFile": false,
+    "ecmaVersion": 2021
+  },
+  "rules": {
+    "no-undef": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "adsniper/service-worker.js",
+        "adsniper/ai/nano-client.js"
+      ],
+      "env": {
+        "serviceworker": true,
+        "browser": false,
+        "webextensions": true
+      },
+      "rules": {
+        "no-undef": "error"
+      }
+    }
+  ],
+  "parser": "@babel/eslint-parser"
+}

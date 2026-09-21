@@ -85,8 +85,10 @@ window.toggleMassBlock = toggleMassBlock;
 document.addEventListener('DOMContentLoaded', async () => {
   // Identify active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  activeTabId  = tab.id;
-  activeTabUrl = tab.url;
+  if (tab) {
+    activeTabId  = tab.id;
+    activeTabUrl = tab.url;
+  }
 
   // Load ad patterns from storage (fetched by SW on install)
   const stored = await chrome.storage.local.get(['adHosts', 'adPatterns']);
@@ -1661,35 +1663,52 @@ async function initPersonalAssistant() {
       expired = true; 
     }
     
-    if (activeTabUrl !== data.astLastUrl && !activeTabUrl.startsWith('blob:')) {
+    if (activeTabUrl && activeTabUrl !== data.astLastUrl && !activeTabUrl.startsWith('blob:')) {
       expired = true;
     }
     
     if (expired) {
       astHistory = [];
-      await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl: activeTabUrl.startsWith('blob:') ? data.astLastUrl : activeTabUrl });
+      await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl: (activeTabUrl && activeTabUrl.startsWith('blob:')) ? data.astLastUrl : activeTabUrl });
     } else {
       astHistory = data.astHistory;
       astHistory.forEach(msg => {
         appendAstMessage(msg.role, msg.content);
       });
-      astLastUrl = activeTabUrl.startsWith('blob:') ? data.astLastUrl : activeTabUrl;
+      astLastUrl = (activeTabUrl && activeTabUrl.startsWith('blob:')) ? data.astLastUrl : activeTabUrl;
     }
   } else {
     astHistory = [];
-    astLastUrl = activeTabUrl.startsWith('blob:') ? data.astLastUrl : activeTabUrl;
+    astLastUrl = (activeTabUrl && activeTabUrl.startsWith('blob:')) ? data.astLastUrl : activeTabUrl;
     await chrome.storage.local.set({ astHistory: [], astLastUpdate: Date.now(), astLastUrl });
   }
 }
 
 function appendAstMessage(role, text) {
   const container = document.getElementById('ast-chat-history');
-  const div = document.createElement('div');
-  div.className = 'ast-message ' + (role === 'user' ? 'user-msg' : 'bot-msg');
-  div.innerHTML = formatAIOutput(text);
-  container.appendChild(div);
+  const wrapper = document.createElement('div');
+  wrapper.className = `ast-message ${role === 'user' ? 'user-msg' : 'bot-msg'}`;
+  
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'ast-message-content';
+  contentDiv.innerHTML = formatAIOutput(text);
+  wrapper.appendChild(contentDiv);
+  
+  if (role === 'bot') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'ast-copy-btn';
+    copyBtn.textContent = 'Copy';
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(contentDiv.innerText || contentDiv.textContent);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+    };
+    wrapper.appendChild(copyBtn);
+  }
+  
+  container.appendChild(wrapper);
   container.scrollTop = container.scrollHeight;
-  return div;
+  return contentDiv;
 }
 
 async function handleAstSend() {
@@ -1707,65 +1726,65 @@ async function handleAstSend() {
   const botDiv = appendAstMessage('bot', '');
   startThinkingAnimation(botDiv);
   
+  if (!window.GeminiNanoClient) {
+    stopThinkingAnimation();
+    botDiv.innerHTML = '<p style="color:var(--red);">AI Client not found.</p>';
+    astIsGenerating = false;
+    document.getElementById('ast-send-btn').disabled = false;
+    return;
+  }
+  
+  const client = window.GeminiNanoClient.getInstance();
   const context = {
     activeTabId,
     activeTabUrl,
     recentRequests: allRequests,
   };
   
-  astHistory.push({ role: 'user', content: text });
-  astHistory.push({ role: 'bot', content: '' });
-  await chrome.storage.local.set({ astHistory, astLastUpdate: Date.now(), astLastUrl });
-
-  const contextTurnsSpan = document.getElementById('ast-context-turns');
-  if (contextTurnsSpan) {
-    contextTurnsSpan.textContent = astHistory.length + ' turns';
+  // Truncate history
+  if (astHistory.length > astContextSize * 2) {
+    astHistory = astHistory.slice(-(astContextSize * 2));
   }
   
-  const chunkListener = (msg) => {
-    if (msg.type === 'AI_CHUNK') {
-      stopThinkingAnimation();
-      botDiv.innerHTML = formatAIOutput(msg.chunk);
-      const container = document.getElementById('ast-chat-history');
-      container.scrollTop = container.scrollHeight;
-    } else if (msg.type === 'AI_STATS') {
-      const tCount = document.getElementById('ast-token-count');
-      const sCount = document.getElementById('ast-speed');
-      if (tCount) tCount.textContent = msg.stats.tokensIn + msg.stats.tokensOut + ' / ' + msg.stats.maxTokens;
-      if (sCount) sCount.textContent = msg.stats.speed + ' t/s';
-    } else if (msg.type === 'AI_COMPLETE') {
-      stopThinkingAnimation();
-      botDiv.innerHTML = formatAIOutput(msg.reply);
-      finishGeneration();
-    } else if (msg.type === 'AI_ERROR') {
-      stopThinkingAnimation();
-      botDiv.innerHTML = '<p style="color:var(--red);">' + formatAIOutput(msg.error) + '</p>';
-      finishGeneration();
+  try {
+    const result = await client.processAssistantPrompt(text, astHistory, context, 
+      (tokenChunk) => {
+        stopThinkingAnimation();
+        botDiv.innerHTML = formatAIOutput(tokenChunk);
+        const container = document.getElementById('ast-chat-history');
+        container.scrollTop = container.scrollHeight;
+      },
+      (stats) => {
+        document.getElementById('ast-token-count').textContent = `${stats.tokensIn + stats.tokensOut} / ${stats.maxTokens}`;
+        document.getElementById('ast-speed').textContent = `${stats.speed} t/s`;
+      }
+    );
+    
+    stopThinkingAnimation();
+    botDiv.innerHTML = formatAIOutput(result.reply || 'Action completed.');
+    
+    astHistory.push({ role: 'user', content: text });
+    astHistory.push({ role: 'assistant', content: result.reply });
+    
+    // Check if this was a summarise request that extracted content
+    if (result.actionExecuted && result.actionExecuted.tool === 'tool_extract_clean_content' && result.actionExecuted.success) {
+      const content = (result.actionExecuted.result && result.actionExecuted.result.content) ? result.actionExecuted.result.content : result.actionExecuted.report;
+      if (content) {
+         const html = `<!DOCTYPE html><html><head><title>Cleaned Page</title><style>body{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:1rem;line-height:1.6;font-size:18px;color:#333;background:#f9f9f9;}</style></head><body><h1>Extracted Content</h1>${content.replace(/\n/g, '<br>')}</body></html>`;
+         const blob = new Blob([html], { type: 'text/html' });
+         const url = URL.createObjectURL(blob);
+         chrome.tabs.create({ url });
+      }
     }
-  };
-  
-  chrome.runtime.onMessage.addListener(chunkListener);
-  
-  chrome.runtime.sendMessage({ 
-    type: 'START_BACKGROUND_AI', 
-    payload: { text, astHistory, context }
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      stopThinkingAnimation();
-      botDiv.innerHTML = '<p style="color:var(--red);">Background worker unavailable.</p>';
-      finishGeneration();
-    }
-  });
-  
-  function finishGeneration() {
-    astIsGenerating = false;
-    document.getElementById('ast-send-btn').disabled = false;
-    chrome.runtime.onMessage.removeListener(chunkListener);
-    if (astHistory.length > astContextSize * 2) {
-      astHistory = astHistory.slice(-(astContextSize * 2));
-      chrome.storage.local.set({ astHistory, astLastUpdate: Date.now() });
-    }
+  } catch (err) {
+    stopThinkingAnimation();
+    botDiv.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
   }
+  
+  astIsGenerating = false;
+  document.getElementById('ast-send-btn').disabled = false;
+  const container = document.getElementById('ast-chat-history');
+  container.scrollTop = container.scrollHeight;
 }
 // ==========================================
 // LISTS PANEL (SCRATCHPAD & TODOS)
@@ -1853,30 +1872,30 @@ async function initListsPanel() {
     renderTodos();
   });
 
-    // MCP Event Listeners
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'AST_SCRATCHPAD_UPDATE') {
-      const { content, append } = msg.payload;
-      if (append && scratchpad.value) {
-        scratchpad.value += '\n\n' + content;
-      } else {
-        scratchpad.value = content;
-      }
+  // MCP Event Listeners
+  window.addEventListener('AST_SCRATCHPAD_UPDATE', (e) => {
+    const { content, append } = e.detail;
+    if (append && scratchpad.value) {
+      scratchpad.value += '\n\n' + content;
+    } else {
+      scratchpad.value = content;
     }
-    
-    if (msg.type === 'AST_TODO_ADD') {
-      const { task, description, eta } = msg.payload;
-      if (task) {
-        todos.push({ 
-          id: Date.now(), 
-          text: task, 
-          done: false, 
-          createdAt: new Date().toISOString(), 
-          description: description || '', 
-          eta: eta || null 
-        });
-        renderTodos();
-      }
+    chrome.storage.local.set({ astScratchpad: scratchpad.value });
+  });
+
+  window.addEventListener('AST_TODO_ADD', (e) => {
+    const { task, description, eta } = e.detail;
+    if (task) {
+      todos.push({ 
+        id: Date.now(), 
+        text: task, 
+        done: false, 
+        createdAt: new Date().toISOString(), 
+        description: description || '', 
+        eta: eta || null 
+      });
+      chrome.storage.local.set({ astTodos: todos });
+      renderTodos();
     }
   });
 
