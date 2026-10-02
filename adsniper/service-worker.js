@@ -18,18 +18,42 @@ const AD_HOSTS_FETCH_URL =
   'https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0&mimetype=plaintext';
 
 // ---------------------------------------------------------------------------
-// 1. webRequest logger — observe all URLs, store per tab
+// 1. webRequest logger — observe all URLs, store per tab (Batched)
 // ---------------------------------------------------------------------------
+const pendingRequests = new Map();
+let requestFlushTimer = null;
+
+async function flushRequests() {
+  requestFlushTimer = null;
+  if (pendingRequests.size === 0) return;
+
+  const pending = new Map(pendingRequests);
+  pendingRequests.clear();
+
+  try {
+    const keys = Array.from(pending.keys());
+    const stored = await chrome.storage.local.get(keys);
+    
+    for (const [key, newReqs] of pending.entries()) {
+      let existing = stored[key] || [];
+      // Prepend newest first
+      existing.unshift(...newReqs);
+      if (existing.length > MAX_REQUESTS_PER_TAB) existing.length = MAX_REQUESTS_PER_TAB;
+      stored[key] = existing;
+    }
+    
+    await chrome.storage.local.set(stored);
+  } catch (err) {
+    console.warn('[AdSniper] Failed to flush requests:', err.message);
+  }
+}
+
 function handleBeforeRequest(details) {
   if (details.tabId < 0) return; // Ignore background/browser requests
 
   (async () => {
     const { monitoringEnabled = true } = await chrome.storage.local.get('monitoringEnabled');
     if (!monitoringEnabled) return;
-
-    const key = `requests_${details.tabId}`;
-    const stored = await chrome.storage.local.get(key);
-    const requests = stored[key] || [];
 
     let postData = null;
     if (details.requestBody) {
@@ -44,8 +68,12 @@ function handleBeforeRequest(details) {
       }
     }
 
-    // Prepend newest first
-    requests.unshift({
+    const key = `requests_${details.tabId}`;
+    if (!pendingRequests.has(key)) {
+      pendingRequests.set(key, []);
+    }
+    
+    pendingRequests.get(key).unshift({
       url: details.url,
       method: details.method || 'GET',
       type: details.type,
@@ -53,8 +81,9 @@ function handleBeforeRequest(details) {
       timestamp: Date.now(),
     });
 
-    if (requests.length > MAX_REQUESTS_PER_TAB) requests.length = MAX_REQUESTS_PER_TAB;
-    await chrome.storage.local.set({ [key]: requests });
+    if (!requestFlushTimer) {
+      requestFlushTimer = setTimeout(flushRequests, 2000);
+    }
   })().catch(() => {});
 }
 
@@ -75,7 +104,9 @@ try {
 // 2. Cleanup — remove log when tab is closed
 // ---------------------------------------------------------------------------
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  await chrome.storage.local.remove(`requests_${tabId}`);
+  const key = `requests_${tabId}`;
+  pendingRequests.delete(key);
+  await chrome.storage.local.remove(key);
   const { snipingActiveTabId } = await chrome.storage.local.get('snipingActiveTabId');
   if (snipingActiveTabId === tabId) {
     await chrome.storage.local.remove('snipingActiveTabId');
@@ -265,6 +296,101 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+
+  // ── Execute AI Scripts in MAIN world safely via chrome.scripting (C3 Fix) ──
+  if (message.type === 'AI_EXECUTE_SCRIPT_MAIN_WORLD') {
+    if (sender.tab && sender.tab.id) {
+      (async () => {
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: sender.tab.id },
+            world: 'MAIN',
+            func: (codeToRun) => {
+              try {
+                // Return eval inside MAIN world sandbox
+                return { result: eval(codeToRun) };
+              } catch (err) {
+                return { error: err.message };
+              }
+            },
+            args: [message.code]
+          });
+          sendResponse({ ok: true, result: results[0]?.result?.result, error: results[0]?.result?.error });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+    }
+  }
+
+  // ── Inject Window Open Override in MAIN world (I2 Fix) ──
+  if (message.type === 'INJECT_WINDOW_OPEN_OVERRIDE') {
+    if (sender.tab && sender.tab.id) {
+      (async () => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: sender.tab.id },
+            world: 'MAIN',
+            func: () => {
+              try {
+                if (!window.__adsniper_orig_open) {
+                  window.__adsniper_orig_open = window.open;
+                }
+                const noopOpen = function(url, target, features) {
+                  console.warn('[AdSniper] Blocked ad script from opening new tab:', url);
+                  return null;
+                };
+                window.open = noopOpen;
+                try { if (window.top) window.top.open = noopOpen; } catch (e) {}
+                try { if (window.parent) window.parent.open = noopOpen; } catch (e) {}
+
+                window.addEventListener('message', function(e) {
+                  if (e.data && (e.data.$G$ || (typeof e.data === 'object' && e.data.event === 'open'))) {
+                    e.stopImmediatePropagation();
+                    console.warn('[AdSniper] Blocked ad postMessage in page context:', e.data);
+                  }
+                }, true);
+              } catch (err) {}
+            }
+          });
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+    }
+  }
+  
+  // ── Restore Window Open Override in MAIN world (I2 Fix) ──
+  if (message.type === 'RESTORE_WINDOW_OPEN_OVERRIDE') {
+    if (sender.tab && sender.tab.id) {
+      (async () => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: sender.tab.id },
+            world: 'MAIN',
+            func: () => {
+              try {
+                if (window.__adsniper_orig_open) {
+                  window.open = window.__adsniper_orig_open;
+                  try { if (window.top) window.top.open = window.__adsniper_orig_open; } catch (e) {}
+                  try { if (window.parent) window.parent.open = window.__adsniper_orig_open; } catch (e) {}
+                  delete window.__adsniper_orig_open;
+                }
+              } catch (err) {}
+            }
+          });
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+    }
+  }
+
   // ── Close dedicated game tab when user clicks Quit Game ──
   if (message.type === 'CLOSE_CURRENT_TAB') {
     if (sender.tab && sender.tab.id) {
@@ -417,6 +543,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 // 6. Install / update hook
 // ---------------------------------------------------------------------------
+async function cleanupOrphanedData() {
+  try {
+    const allStorage = await chrome.storage.local.get(null);
+    const keysToRemove = [];
+    const openTabs = await chrome.tabs.query({});
+    const openTabIds = new Set(openTabs.map(t => t.id));
+
+    for (const key of Object.keys(allStorage)) {
+      if (key.startsWith('blockCount_')) {
+        keysToRemove.push(key);
+      } else if (key.startsWith('requests_')) {
+        const tabIdStr = key.replace('requests_', '');
+        if (tabIdStr !== 'global' && !openTabIds.has(Number(tabIdStr))) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      console.log(`[AdSniper] Storage cleanup: removed ${keysToRemove.length} stale/legacy keys.`);
+    }
+  } catch (err) {
+    console.warn('[AdSniper] Storage cleanup failed:', err);
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => cleanupOrphanedData());
+
+chrome.runtime.onSuspend.addListener(() => {
+  // Ensure we don't lose batched in-memory data when the ephemeral MV3 worker goes to sleep
+  flushRequests();
+  if (typeof flushBlockCounts === 'function') flushBlockCounts();
+});
+
+async function cleanupOrphanedData() {
+  try {
+    const allStorage = await chrome.storage.local.get(null);
+    const keysToRemove = [];
+    const openTabs = await chrome.tabs.query({});
+    const openTabIds = new Set(openTabs.map(t => t.id));
+
+    for (const key of Object.keys(allStorage)) {
+      if (key.startsWith('blockCount_')) {
+        keysToRemove.push(key);
+      } else if (key.startsWith('requests_')) {
+        const tabIdStr = key.replace('requests_', '');
+        if (tabIdStr !== 'global' && !openTabIds.has(Number(tabIdStr))) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      console.log(`[AdSniper] Storage cleanup: removed ${keysToRemove.length} stale/legacy keys.`);
+    }
+  } catch (err) {
+    console.warn('[AdSniper] Storage cleanup failed:', err);
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => cleanupOrphanedData());
+
+chrome.runtime.onSuspend.addListener(() => {
+  // Ensure we don't lose batched in-memory data when the ephemeral MV3 worker goes to sleep
+  flushRequests();
+  if (typeof flushBlockCounts === 'function') flushBlockCounts();
+});
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Set storage defaults on first install
   const { nextRuleId, aiEnabled } = await chrome.storage.local.get(['nextRuleId', 'aiEnabled']);
@@ -444,33 +640,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 
   // ── Run storage cleanup for legacy keys and orphaned tabs ──
-  try {
-    const allStorage = await chrome.storage.local.get(null);
-    const keysToRemove = [];
-    const openTabs = await chrome.tabs.query({});
-    const openTabIds = new Set(openTabs.map(t => t.id));
-
-    for (const key of Object.keys(allStorage)) {
-      // 1. Remove legacy per-rule blockCount_ keys
-      if (key.startsWith('blockCount_')) {
-        keysToRemove.push(key);
-      }
-      // 2. Remove request logs for tabs that no longer exist
-      else if (key.startsWith('requests_')) {
-        const tabIdStr = key.replace('requests_', '');
-        if (tabIdStr !== 'global' && !openTabIds.has(Number(tabIdStr))) {
-          keysToRemove.push(key);
-        }
-      }
-    }
-
-    if (keysToRemove.length > 0) {
-      await chrome.storage.local.remove(keysToRemove);
-      console.log(`[AdSniper] Storage cleanup: removed ${keysToRemove.length} stale/legacy keys.`);
-    }
-  } catch (err) {
-    console.warn('[AdSniper] Storage cleanup failed:', err);
-  }
+  await cleanupOrphanedData();
 });
 
 // ---------------------------------------------------------------------------

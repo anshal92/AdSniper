@@ -197,59 +197,40 @@ The tool returns the tasks already categorized and pre-formatted into an object.
    */
   async getOrCreateSession() {
     if (this.session) return this.session;
-    if (this.isInitializing) {
-      // Wait for initialization to complete
-      while (this.isInitializing) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      return this.session;
-    }
+    if (this._sessionInitPromise) return await this._sessionInitPromise;
 
-    const lm = this.getLanguageModelAPI();
-    if (!lm) return null;
-
-    this.isInitializing = true;
-    try {
-      const systemPrompt = await this.getSystemPrompt();
-
-      const createOptions = {
-        systemPrompt,
-        temperature: 0.2,
-        topK: 3,
-      };
-
-      // Add download progress monitor if supported
-      if (this.availabilityStatus === 'downloading') {
-        createOptions.monitor = (m) => {
-          m.addEventListener('downloadprogress', (e) => {
-            if (e.total) {
-              this.downloadProgress = Math.round((e.loaded / e.total) * 100);
-            }
-          });
-        };
-      }
-
-      // Try creating session with options, fall back gracefully if specific options are unsupported
+    this._sessionInitPromise = (async () => {
+      const lm = this.getLanguageModelAPI();
+      if (!lm) return null;
       try {
-        this.session = await lm.create(createOptions);
-      } catch (optErr) {
-        console.warn('[AdSniper AI] lm.create with options failed, trying systemPrompt only:', optErr);
-        try {
-          this.session = await lm.create({ systemPrompt });
-        } catch (promptErr) {
-          console.warn('[AdSniper AI] lm.create with systemPrompt failed, trying bare create:', promptErr);
-          this.session = await lm.create();
+        const systemPrompt = await this.getSystemPrompt();
+        const createOptions = { systemPrompt, temperature: 0.2, topK: 3 };
+        if (this.availabilityStatus === 'downloading') {
+          createOptions.monitor = (m) => {
+            m.addEventListener('downloadprogress', (e) => {
+              if (e.total) this.downloadProgress = Math.round((e.loaded / e.total) * 100);
+            });
+          };
         }
+        let sess;
+        try { sess = await lm.create(createOptions); }
+        catch (e) {
+          try { sess = await lm.create({ systemPrompt }); }
+          catch (e) { sess = await lm.create(); }
+        }
+        this.availabilityStatus = 'ready';
+        this.statusMessage = 'Gemini Nano Ready (On-device)';
+        return sess;
+      } catch (err) {
+        console.warn('[AdSniper AI] Session creation failed:', err);
+        return null;
       }
-
-      this.availabilityStatus = 'ready';
-      this.statusMessage = 'Gemini Nano Ready (On-device)';
+    })();
+    try {
+      this.session = await this._sessionInitPromise;
       return this.session;
-    } catch (err) {
-      console.warn('[AdSniper AI] Session creation failed:', err);
-      return null;
     } finally {
-      this.isInitializing = false;
+      this._sessionInitPromise = null;
     }
   }
 
@@ -259,48 +240,38 @@ The tool returns the tasks already categorized and pre-formatted into an object.
    */
   async getAssistantSession() {
     if (this.assistantSession) return this.assistantSession;
-    if (this.isAssistantInitializing) {
-      while (this.isAssistantInitializing) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      return this.assistantSession;
-    }
+    if (this._assistantInitPromise) return await this._assistantInitPromise;
 
-    const lm = this.getLanguageModelAPI();
-    if (!lm) return null;
-
-    this.isAssistantInitializing = true;
-    try {
-      const currentContext = `\n\n[SYSTEM CONTEXT]\nCurrent Date & Time: ${new Date().toString()}`;
-      const systemPrompt = GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + currentContext;
-      
-      const createOptions = {
-        systemPrompt: systemPrompt,
-        temperature: 0.7,
-        topK: 3,
-      };
-
+    this._assistantInitPromise = (async () => {
+      const lm = this.getLanguageModelAPI();
+      if (!lm) return null;
       try {
-        this.assistantSession = await lm.create(createOptions);
-      } catch (optErr) {
-        try {
-          this.assistantSession = await lm.create({ systemPrompt: systemPrompt });
-        } catch (promptErr) {
-          this.assistantSession = await lm.create();
+        const currentContext = `\n\n[SYSTEM CONTEXT]\nCurrent Date & Time: ${new Date().toString()}`;
+        const systemPrompt = GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + currentContext;
+        const createOptions = { systemPrompt, temperature: 0.7, topK: 3 };
+        let sess;
+        try { sess = await lm.create(createOptions); }
+        catch (e) {
+          try { sess = await lm.create({ systemPrompt }); }
+          catch (e) { sess = await lm.create(); }
         }
+        return sess;
+      } catch (err) {
+        console.warn('[AdSniper AI] Assistant Session creation failed:', err);
+        return null;
       }
+    })();
+    try {
+      this.assistantSession = await this._assistantInitPromise;
       return this.assistantSession;
-    } catch (err) {
-      console.warn('[AdSniper AI] Assistant Session creation failed:', err);
-      return null;
     } finally {
-      this.isAssistantInitializing = false;
+      this._assistantInitPromise = null;
     }
   }
 
   /**
    * Classifies direct command intents from natural language prompts.
-   * Ensures commands like "kill popups", "remove on click new tab", etc. ALWAYS execute.
+   * Ensures commands like kill popups ALWAYS execute.
    *
    * @param {string} promptText
    * @returns {{ tool: string, args: object, intentName: string } | null}
@@ -803,7 +774,7 @@ The tool returns the tasks already categorized and pre-formatted into an object.
       let outTokenCount = 0;
       try {
         if (typeof session.countPromptTokens === 'function') {
-          outTokenCount = await session.countPromptTokens(fullResponse);
+          outTokenCount = Math.ceil(fullResponse.length / 4); // O3: character-based estimate instead of async call
         } else {
           outTokenCount = Math.ceil(fullResponse.length / 4);
         }
@@ -846,33 +817,82 @@ The tool returns the tasks already categorized and pre-formatted into an object.
         
         try {
           const extractedData = actionResult.text ? actionResult.text : actionResult.report;
-          let summaryPrompt = `${GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT}\n\n`;
-          summaryPrompt += `[System Context - Data extracted from page]:\n"""\n${extractedData.slice(0, 16000)}\n"""\n\nUser: ${promptText}\nAssistant: (Synthesizing answer based ONLY on the extracted data) `;
-          let summaryResponse = '';
-          if (typeof session.promptStreaming === 'function' && onToken) {
-            const stream2 = session.promptStreaming(summaryPrompt);
-            for await (const rawChunk of stream2) {
-              const chunk = typeof rawChunk === 'string' ? rawChunk : (rawChunk && rawChunk.text ? rawChunk.text : String(rawChunk || ''));
-              if (!chunk) continue;
-              if (summaryResponse && chunk.startsWith(summaryResponse)) {
-                summaryResponse = chunk;
-              } else if (summaryResponse && chunk === summaryResponse) {
-                continue;
-              } else {
-                summaryResponse += chunk;
-              }
-              const displaySnippet = this.cleanActionFromReply(summaryResponse);
-              if (displaySnippet) {
-                if (actionResult.tool === 'tool_get_todos') {
-                  onToken(displaySnippet);
-                } else {
-                  onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${displaySnippet}`);
-                }
+          // Aggressively truncate to stay within Gemini Nano's small context window (~4096 tokens).
+          // System prompt (~200 tokens) + user query (~50 tokens) + extracted data + output budget.
+          // Reserve ~1500 tokens for output, so cap input data at ~2000 tokens (~8000 chars).
+          const maxExtractChars = 8000;
+          const truncatedData = extractedData.length > maxExtractChars
+            ? extractedData.slice(0, maxExtractChars) + '\n\n[...content truncated for summarization...]'
+            : extractedData;
+
+          // Create a FRESH session for synthesis to avoid accumulated context from the first pass
+          const lm = this.getLanguageModelAPI();
+          let synthSession = null;
+          if (lm) {
+            try {
+              synthSession = await lm.create({
+                systemPrompt: 'You are a concise summarizer. Given extracted page content, provide a clear summary. Be brief and informative.',
+                temperature: 0.3,
+                topK: 3,
+              });
+            } catch (createErr) {
+              try {
+                synthSession = await lm.create();
+              } catch (e) {
+                synthSession = null;
               }
             }
-          } else {
-            const rawRes = await session.prompt(summaryPrompt);
-            summaryResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
+          }
+
+          if (!synthSession) {
+            // Cannot create synthesis session — show raw extracted text as fallback
+            const fallbackReply = `✅ **Action Executed:** ${actionResult.message}\n\n${truncatedData}`;
+            if (onToken) onToken(fallbackReply);
+            return { reply: fallbackReply, actionExecuted: actionResult };
+          }
+
+          let summaryPrompt = `[Extracted page content]:\n"""\n${truncatedData}\n"""\n\nUser request: ${promptText}\n\nProvide a clear, concise summary of the above content:`;
+          let summaryResponse = '';
+          try {
+            if (typeof synthSession.promptStreaming === 'function' && onToken) {
+              const stream2 = synthSession.promptStreaming(summaryPrompt);
+              let chunkCounter2 = 0;
+              for await (const rawChunk of stream2) {
+                const chunk = typeof rawChunk === 'string' ? rawChunk : (rawChunk && rawChunk.text ? rawChunk.text : String(rawChunk || ''));
+                if (!chunk) continue;
+                if (summaryResponse && chunk.startsWith(summaryResponse)) {
+                  summaryResponse = chunk;
+                } else if (summaryResponse && chunk === summaryResponse) {
+                  continue;
+                } else {
+                  summaryResponse += chunk;
+                }
+                
+                chunkCounter2++;
+                if (chunkCounter2 % 10 === 0 || summaryResponse.includes('```action')) {
+                  const displaySnippet = this.cleanActionFromReply(summaryResponse);
+                  if (displaySnippet) {
+                    if (actionResult.tool === 'tool_get_todos') {
+                      onToken(displaySnippet);
+                    } else {
+                      onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${displaySnippet}`);
+                    }
+                  }
+                } else if (!summaryResponse.includes('```')) {
+                  if (actionResult.tool === 'tool_get_todos') {
+                    onToken(summaryResponse);
+                  } else {
+                    onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${summaryResponse}`);
+                  }
+                }
+              }
+            } else {
+              const rawRes = await synthSession.prompt(summaryPrompt);
+              summaryResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
+            }
+          } finally {
+            // Always destroy the temporary synthesis session to free memory
+            try { synthSession.destroy(); } catch (e) {}
           }
           
           if (actionResult.tool === 'tool_get_todos') {
@@ -883,6 +903,11 @@ The tool returns the tasks already categorized and pre-formatted into an object.
           return { reply: cleanedReply, actionExecuted: actionResult };
         } catch (err) {
           console.warn('[AdSniper AI] Second pass summarization failed:', err);
+          // Fallback: show the raw extracted content instead of nothing
+          const extractedData = actionResult.text || actionResult.report || '';
+          const fallbackReply = `✅ **Content Extracted** (summary unavailable):\n\n${extractedData.slice(0, 4000)}`;
+          if (onToken) onToken(fallbackReply);
+          cleanedReply = fallbackReply;
         }
       }
 

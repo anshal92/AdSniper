@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AdSniper",
-  "version": "2.0",
+  "version": "2.2.0",
   "description": "Inspect network requests, selectively block ads, and edit/lock cookies — all from one popup.",
   "permissions": [
     "declarativeNetRequest",
