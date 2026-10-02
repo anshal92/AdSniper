@@ -321,6 +321,7 @@ snipingPreGameState    Object: snapshot of all toggle states before game started
 snipingOpenNewTab      Boolean, whether to open new tab vs reload for game
 astScratchpad          String, persistent scratchpad notepad content
 astTodos               Array<{id, text, done}>, persistent todo list items
+astHistory             Array<{role, content}>, persistent chat history for the AI Personal Assistant
 ```
 
 ### Critical Constraints
