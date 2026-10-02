@@ -4,6 +4,26 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ---
 
+## [2026-10-03] — Personal Assistant Deep Audit & Bug Fixes
+
+### Fixed
+- **Summarization Context Overflow**: Fixed an issue where asking the Personal Assistant to "summarize this page" would silently fail and output only the raw extraction status. The synthesis pass was blowing Gemini Nano's context window by re-feeding the full system prompt and up to 16,000 characters of extracted text on the same session. Fixed by creating a fresh synthesis session and aggressively truncating input to ~8000 characters.
+- **Context Poisoning & Exponential Token Growth**: Fixed a critical bug in `nano-client.js` where the entire conversation history was manually appended to the prompt on every turn, exponentially duplicating history since `session.prompt()` already maintains its own internal context.
+- **Race Condition in Session Initialization**: Replaced dangerous polling loops in `getOrCreateSession` and `getAssistantSession` with strict Promise-based locks, preventing duplicate concurrent `lm.create()` calls from leaking memory and creating orphaned sessions.
+- **Leaking Chrome Message Ports**: Removed a blanket `return true;` in `content.js`'s message listener that was leaking ports on every synchronous AI action (like DOM cleanup or overlay removal), causing Chrome extension errors.
+- **Session Crash Recovery**: Added robust catch blocks to `processAssistantPrompt` that detect fatal Gemini Nano errors (like token exhaustion) and actively `destroy()` the corrupted session, allowing automatic recovery on the user's next prompt.
+
+### Optimized
+- **O(N²) Streaming Processing Lag**: Heavily optimized the token streaming loops in `nano-client.js`. `cleanActionFromReply` now fires only every 10 chunks or when an action block is detected, eliminating severe UI thread stalling caused by parsing the entire accumulated string on every single token.
+- **MutationObserver Batching**: Refactored the `content.js` DOM observer to use `requestAnimationFrame` batching instead of running `querySelectorAll` synchronously for every individual node added to the DOM, fixing main-thread freezes on modern single-page apps.
+- **Redundant Token Counting**: Replaced the expensive async `session.countPromptTokens()` call on the output response with a fast character-based heuristic.
+
+### Added
+- **Chat History Persistence**: The Personal Assistant now automatically saves conversations to `chrome.storage.local` and restores them when the popup opens.
+- **Robust Content Script Injection**: Replaced a flaky 120ms hardcoded delay in `popup.js` with an exponential backoff `PING`-polling mechanism, ensuring AI commands don't randomly fail on heavy tabs.
+
+---
+
 ## [2026-09-18] — Fix DNR Duplicate Rule ID Crashes & LanguageModel Output Language Warning
 
 ### Fixed
