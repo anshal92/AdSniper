@@ -55,6 +55,11 @@ const AD_CONTAINER_RE =
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message.type) {
 
+    case 'PING': {
+      sendResponse({ ok: true });
+      break;
+    }
+
     case 'REMOVE_AD_ELEMENT': {
       if (!domCleanupEnabled) { sendResponse({ hidden: 0 }); break; }
       const hidden = hideByUrl(message.url);
@@ -138,13 +143,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     case 'AI_EXECUTE_SCRIPT': {
-      const response = executeCustomDOMScript(message.code);
-      sendResponse(response);
-      break;
+      // Forward the execution to the background script to run in MAIN world
+      chrome.runtime.sendMessage({
+        type: 'AI_EXECUTE_SCRIPT_MAIN_WORLD',
+        code: message.code
+      }, (response) => {
+        sendResponse(response);
+      });
+      return true; // Keep message channel open for async response
     }
   }
-
-  return true; // Keep async message channel open
 });
 
 // ─────────────────────────────────────────────────────────
@@ -308,30 +316,54 @@ function processNewNode(node) {
   }
 }
 
+let pendingMutations = [];
+let pendingFrame = null;
+
 const mutationObserver = new MutationObserver((mutations) => {
   if (!domCleanupEnabled) return;
   if (blockedHosts.length === 0 && blockedPatterns.length === 0) return;
 
-  for (const mutation of mutations) {
-    for (const node of mutation.addedNodes) {
-      processNewNode(node);
-
-      // Also check for dynamically injected ad iframes
-      if (iframeBlockerEnabled && node.nodeType === Node.ELEMENT_NODE) {
-        if (node.tagName === 'IFRAME' && isAdIframe(node)) {
-          node.remove();
-          iframesRemovedCount++;
-        }
-        if (node.querySelectorAll) {
-          node.querySelectorAll('iframe').forEach((iframe) => {
-            if (isAdIframe(iframe)) {
-              iframe.remove();
-              iframesRemovedCount++;
+  pendingMutations.push(...mutations);
+  if (!pendingFrame) {
+    pendingFrame = requestAnimationFrame(() => {
+      // 1. Collect all added nodes first
+      const nodesToCheck = new Set();
+      const iframesToCheck = new Set();
+      
+      for (const mutation of pendingMutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            nodesToCheck.add(node);
+            if (iframeBlockerEnabled) {
+              if (node.tagName === 'IFRAME') iframesToCheck.add(node);
             }
-          });
+          }
         }
       }
-    }
+      
+      // 2. Clear queues
+      pendingMutations = [];
+      pendingFrame = null;
+
+      // 3. Process top-level nodes for iframes
+      if (iframeBlockerEnabled) {
+        for (const node of nodesToCheck) {
+          if (node.querySelectorAll) {
+            node.querySelectorAll('iframe').forEach(iframe => iframesToCheck.add(iframe));
+          }
+        }
+        for (const iframe of iframesToCheck) {
+          if (isAdIframe(iframe)) {
+            try { iframe.remove(); iframesRemovedCount++; } catch(e) {}
+          }
+        }
+      }
+
+      // 4. Process all new nodes for URL patterns
+      for (const node of nodesToCheck) {
+        processNewNode(node);
+      }
+    });
   }
 });
 

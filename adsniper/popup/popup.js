@@ -66,8 +66,16 @@ async function sendToTab(message) {
       files:  ['content/sniper-game.js', 'content/content.js'],
     });
 
-    // Brief wait for listeners to register and storage init to complete
-    await new Promise((r) => setTimeout(r, 120));
+    // Ping-poll to wait for content script readiness instead of hardcoded wait
+    for (let delay of [50, 100, 200, 500]) {
+      await new Promise((r) => setTimeout(r, delay));
+      try {
+        const ping = await chrome.tabs.sendMessage(activeTabId, { type: 'PING' });
+        if (ping && ping.ok) break;
+      } catch (e) {
+        continue;
+      }
+    }
 
     // Retry — should succeed now
     return await chrome.tabs.sendMessage(activeTabId, message);
@@ -83,6 +91,28 @@ window.toggleMassBlock = toggleMassBlock;
 // Entry point
 // ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Load AI Chat History
+  const { astHistory: savedAstHistory = [] } = await chrome.storage.local.get('astHistory');
+  if (savedAstHistory && savedAstHistory.length > 0) {
+    astHistory = savedAstHistory;
+    const chatContainer = document.getElementById('ast-chat');
+    if (chatContainer) {
+      for (const msg of astHistory) {
+        if (msg.role === 'user') {
+          const uDiv = document.createElement('div');
+          uDiv.className = 'ast-message ast-user';
+          uDiv.textContent = msg.content;
+          chatContainer.appendChild(uDiv);
+        } else {
+          const bDiv = document.createElement('div');
+          bDiv.className = 'ast-message ast-bot';
+          bDiv.innerHTML = formatAIOutput(msg.content);
+          chatContainer.appendChild(bDiv);
+        }
+      }
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+  }
   // Identify active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab) {
@@ -258,10 +288,7 @@ async function refreshAdBlocker() {
   allRequests = storedReqs[`requests_${activeTabId}`] || [];
 
   // Fetch all block counts in one storage call
-  const countKeys = rules.map((r) => `blockCount_${r.id}`);
-  const blockCounts = countKeys.length > 0
-    ? await chrome.storage.local.get(countKeys)
-    : {};
+  const { blockCounts = {} } = await chrome.storage.local.get('blockCounts');
 
   renderRequests(allRequests);
   renderRules(rules, blockCounts);
@@ -297,9 +324,13 @@ function renderRequests(requests) {
   }
 
   const prevScroll = container.scrollTop;
+  const fragment = document.createDocumentFragment();
+  filtered.forEach((req) => fragment.appendChild(buildRequestRow(req)));
   container.innerHTML = '';
-  filtered.forEach((req) => container.appendChild(buildRequestRow(req)));
-  container.scrollTop = prevScroll;
+  container.appendChild(fragment);
+  requestAnimationFrame(() => {
+    container.scrollTop = prevScroll;
+  });
 }
 
 function buildRequestRow(req) {
@@ -423,6 +454,7 @@ function renderRules(rules, blockCounts = {}) {
   }
 
   container.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   rules.forEach((rule) => {
     const row = document.createElement('div');
     row.className = 'rule-row';
@@ -434,7 +466,7 @@ function renderRules(rules, blockCounts = {}) {
     patternEl.textContent = rule.condition.urlFilter;
 
     // Block count badge
-    const hits = blockCounts[`blockCount_${rule.id}`] || 0;
+    const hits = blockCounts[rule.id] || 0;
     const countBadge = document.createElement('span');
     countBadge.className = `block-count${hits === 0 ? ' zero' : ''}`;
     countBadge.title     = hits === 0
@@ -452,7 +484,9 @@ function renderRules(rules, blockCounts = {}) {
         removeRuleIds: [rule.id],
       });
       // Clean up the stored block count for this rule
-      await chrome.storage.local.remove(`blockCount_${rule.id}`);
+      const { blockCounts = {} } = await chrome.storage.local.get('blockCounts');
+      delete blockCounts[rule.id];
+      await chrome.storage.local.set({ blockCounts });
       await syncBadge();
       await refreshAdBlocker();
     });
@@ -460,8 +494,9 @@ function renderRules(rules, blockCounts = {}) {
     row.appendChild(patternEl);
     row.appendChild(countBadge);
     row.appendChild(removeBtn);
-    container.appendChild(row);
+    fragment.appendChild(row);
   });
+  container.appendChild(fragment);
 }
 
 async function syncBadge() {
@@ -495,7 +530,9 @@ async function toggleMassBlock() {
           removeRuleIds: massBlockRuleIds,
         });
         // Clean up stored block counts for all mass-block rules
-        await chrome.storage.local.remove(massBlockRuleIds.map((id) => `blockCount_${id}`));
+        const { blockCounts = {} } = await chrome.storage.local.get('blockCounts');
+        massBlockRuleIds.forEach((id) => delete blockCounts[id]);
+        await chrome.storage.local.set({ blockCounts });
       }
       await chrome.storage.local.set({ massBlockActive: false, massBlockRuleIds: [] });
 
@@ -1765,6 +1802,7 @@ async function handleAstSend() {
     
     astHistory.push({ role: 'user', content: text });
     astHistory.push({ role: 'assistant', content: result.reply });
+    await chrome.storage.local.set({ astHistory: astHistory.slice(-20) });
     
     // Check if this was a summarise request that extracted content
     if (result.actionExecuted && result.actionExecuted.tool === 'tool_extract_clean_content' && result.actionExecuted.success) {

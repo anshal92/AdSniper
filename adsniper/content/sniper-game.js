@@ -51,6 +51,37 @@ window.AdSniperGame = (() => {
     '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
   ];
 
+  // Weapon system
+  const WEAPONS = {
+    sniper:  { maxAmmo: Infinity, cooldown: 0,  reloadTime: 0,   scoreMult: 1.0, hitRadiusMult: 1.0 },
+    shotgun: { maxAmmo: 8,        cooldown: 20, reloadTime: 120,  scoreMult: 0.5, hitRadiusMult: 1.0, pellets: 8, spreadAngle: Math.PI / 6 },
+    magnum:  { maxAmmo: 6,        cooldown: 10, reloadTime: 90,   scoreMult: 2.0, hitRadiusMult: 2.0, piercing: true },
+  };
+  const WEAPON_ORDER = ['sniper', 'shotgun', 'magnum'];
+
+  // Health system
+  const MAX_HEALTH           = 10;
+  const INVINCIBILITY_MS     = 1000;
+  const DAMAGE_FLASH_FRAMES  = 8;
+
+  // Enemy type chances
+  const ENEMY_SHINY_CHANCE   = 0.15;
+  const ENEMY_RED_CHANCE     = 0.10;
+  const RED_BIRD_SPEED_MULT  = 2.0;
+  const RED_BIRD_ATTACK_RANGE = 60;
+  const RED_BIRD_ATTACK_FRAMES = 30;
+  const RED_BIRD_DAMAGE      = 2;
+  const SHINY_SPEED_MULT     = 1.5;
+  const SHINY_DIR_CHANGE_MS  = 1500;
+
+  // Clouds
+  const CLOUD_COUNT     = 8;
+  const CLOUD_MIN_SPEED = 0.3;
+  const CLOUD_MAX_SPEED = 0.8;
+
+  // Screen shake
+  const SCREEN_SHAKE_DECAY = 0.85;
+
   // ═══════════════════════════════════════════════
   //  GAME STATE
   // ═══════════════════════════════════════════════
@@ -82,6 +113,31 @@ window.AdSniperGame = (() => {
   let loadingMessage = 'Scanning for ads...';
   let gameOverAlpha = 0; // Fade-in for game over screen
   let loadingPurgedAds = []; // Overlays caught and purged during the loading screen
+
+  // Weapon state
+  let currentWeapon = 'sniper';
+  let ammo = { sniper: Infinity, shotgun: 8, magnum: 6 };
+  let reloadTimer = 0;
+  let weaponCooldown = 0;
+  let muzzleFlashTimer = 0;
+
+  // Health state
+  let playerHealth = 10;
+  let damageFlashTimer = 0;
+  let lastDamageTime = 0;
+
+  // Screen shake
+  let screenShakeX = 0;
+  let screenShakeY = 0;
+
+  // Cloud system
+  let clouds = [];
+
+  // Smoothed delta time
+  let smoothDt = 1.0;
+
+  // Red bird proximity tracking (birdId -> frames in range)
+  let redBirdProximity = new Map();
 
   // ═══════════════════════════════════════════════
   //  COVERING OVERLAY & POPUP PURGER
@@ -326,41 +382,16 @@ window.AdSniperGame = (() => {
   }
 
   function startOverlayWatcher() {
-    if (popupObserver) return;
-
-    popupObserver = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            checkAndPurgeSingleOverlay(node);
-            if (node.querySelectorAll) {
-              node.querySelectorAll(
-                '[data-shb], [data-area], [data-onopen], [id^="bg-ssp-"], #custom-ad-slot, #a1rmqtdyf, .D1BnW, ._0Or05, .Kv1JU, .blox, dialog, [role="dialog"], [role="alertdialog"], [class*="overlay"], [class*="modal"], [class*="popup"], [style*="fixed"], [style*="2147483647"], iframe[srcdoc]'
-              ).forEach(checkAndPurgeSingleOverlay);
-            }
-          }
-        }
+    // Both subtree observer and 1-second polling were massive performance killers
+    // that caused layout thrashing and event floods on SPAs.
+    // They have been removed to prioritize game performance.
+    const purged = purgeCoveringOverlays();
+    for (const ad of purged) {
+      if (gameState === 'PLAYING') {
+        spawnBirdFromAd(ad);
+      } else {
+        loadingPurgedAds.push(ad);
       }
-    });
-
-    popupObserver.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
-
-    // Periodic check every 1000ms to catch elements styled or unhidden via JS
-    // Relaxed from 250ms to 1000ms to eliminate recurring synchronous layout reflows during active gameplay
-    if (!overlayCheckInterval) {
-      overlayCheckInterval = setInterval(() => {
-        const purged = purgeCoveringOverlays();
-        for (const ad of purged) {
-          if (gameState === 'PLAYING') {
-            spawnBirdFromAd(ad);
-          } else {
-            loadingPurgedAds.push(ad);
-          }
-        }
-      }, 1000);
     }
   }
 
@@ -400,7 +431,16 @@ window.AdSniperGame = (() => {
     const size = Math.max(minSize, Math.min(maxSize, minDim * 0.08));
     const points = Math.round(50 + Math.random() * 50);
 
-    const texture = createBirdTexture(ad, size);
+    // Assign enemy type
+    let type = 'normal';
+    const typeRoll = Math.random();
+    if (typeRoll < ENEMY_RED_CHANCE) type = 'red_flasher';
+    else if (typeRoll < ENEMY_RED_CHANCE + ENEMY_SHINY_CHANCE) type = 'shiny';
+
+    const speedMult = type === 'shiny' ? SHINY_SPEED_MULT : type === 'red_flasher' ? RED_BIRD_SPEED_MULT : 1;
+    const texture = type === 'shiny' ? createShinyBirdTexture(ad, size)
+                  : type === 'red_flasher' ? createRedFlasherTexture(ad, size)
+                  : createBirdTexture(ad, size);
     const directionAngle = Math.floor(Math.random() * 360) + 1;
 
     // Spawn from edge
@@ -412,7 +452,8 @@ window.AdSniperGame = (() => {
       id: birds.length,
       x, y,
       size,
-      speed: BIRD_SPEED * (0.8 + Math.random() * 0.4),
+      type,
+      speed: BIRD_SPEED * (0.8 + Math.random() * 0.4) * speedMult,
       directionAngle,
       lastDirChange: Date.now(),
       a1: ZIGZAG_A1 * (0.7 + Math.random() * 0.6),
@@ -455,32 +496,7 @@ window.AdSniperGame = (() => {
   // ═══════════════════════════════════════════════
   function preventWindowOpenInPage() {
     try {
-      const script = document.createElement('script');
-      script.textContent = `
-        (() => {
-          try {
-            if (!window.__adsniper_orig_open) {
-              window.__adsniper_orig_open = window.open;
-            }
-            const noopOpen = function(url, target, features) {
-              console.warn('[AdSniper] Blocked ad script from opening new tab:', url);
-              return null;
-            };
-            window.open = noopOpen;
-            try { if (window.top) window.top.open = noopOpen; } catch (e) {}
-            try { if (window.parent) window.parent.open = noopOpen; } catch (e) {}
-
-            window.addEventListener('message', function(e) {
-              if (e.data && (e.data.$G$ || (typeof e.data === 'object' && e.data.event === 'open'))) {
-                e.stopImmediatePropagation();
-                console.warn('[AdSniper] Blocked ad postMessage in page context:', e.data);
-              }
-            }, true);
-          } catch (err) {}
-        })();
-      `;
-      (document.head || document.documentElement).appendChild(script);
-      script.remove();
+      chrome.runtime.sendMessage({ type: 'INJECT_WINDOW_OPEN_OVERRIDE' });
     } catch (e) {
       console.warn('[AdSniper] Could not override window.open:', e);
     }
@@ -677,8 +693,18 @@ window.AdSniperGame = (() => {
       const sizeRatio = (size - minSize) / (maxSize - minSize); // 0 = min size, 1 = max size
       const points = Math.round(10 + (1 - sizeRatio) * 90); // 10–100 points
 
-      // Create texture for this bird
-      const texture = createBirdTexture(ad, size);
+      // Assign enemy type
+      let type = 'normal';
+      const typeRoll = Math.random();
+      if (typeRoll < ENEMY_RED_CHANCE) type = 'red_flasher';
+      else if (typeRoll < ENEMY_RED_CHANCE + ENEMY_SHINY_CHANCE) type = 'shiny';
+
+      const speedMult = type === 'shiny' ? SHINY_SPEED_MULT : type === 'red_flasher' ? RED_BIRD_SPEED_MULT : 1;
+
+      // Create type-specific texture
+      const texture = type === 'shiny' ? createShinyBirdTexture(ad, size)
+                    : type === 'red_flasher' ? createRedFlasherTexture(ad, size)
+                    : createBirdTexture(ad, size);
 
       // Random starting direction angle: between 1 and 360 degrees
       const directionAngle = Math.floor(Math.random() * 360) + 1;
@@ -699,9 +725,10 @@ window.AdSniperGame = (() => {
         id: i,
         x, y,
         size,
+        type,
         directionAngle,
         lastDirChange,
-        speed: BIRD_SPEED * (0.8 + Math.random() * 0.4),
+        speed: BIRD_SPEED * (0.8 + Math.random() * 0.4) * speedMult,
         a1, f1, a2, f2,
         phase: Math.random() * Math.PI * 2,
         time: 0,
@@ -752,6 +779,43 @@ window.AdSniperGame = (() => {
     tCtx.textBaseline = 'middle';
     tCtx.fillText('AD', s / 2, s * 0.4);
 
+    // Eye
+    tCtx.fillStyle = '#fff';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.7, s * 0.25, s * 0.06, 0, Math.PI * 2);
+    tCtx.fill();
+    tCtx.fillStyle = '#000';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.72, s * 0.25, s * 0.03, 0, Math.PI * 2);
+    tCtx.fill();
+    // Specular highlight
+    tCtx.fillStyle = '#fff';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.73, s * 0.23, s * 0.012, 0, Math.PI * 2);
+    tCtx.fill();
+
+    // Beak
+    tCtx.fillStyle = '#f59e0b';
+    tCtx.beginPath();
+    tCtx.moveTo(s * 0.88, s * 0.3);
+    tCtx.lineTo(s * 1.02, s * 0.35);
+    tCtx.lineTo(s * 0.88, s * 0.4);
+    tCtx.closePath();
+    tCtx.fill();
+
+    // Tail feathers
+    tCtx.globalAlpha = 0.5;
+    tCtx.fillStyle = color;
+    for (let tf = 0; tf < 3; tf++) {
+      tCtx.beginPath();
+      tCtx.moveTo(s * 0.05, s * 0.35 + tf * s * 0.06);
+      tCtx.lineTo(-s * 0.12, s * 0.25 + tf * s * 0.1);
+      tCtx.lineTo(s * 0.05, s * 0.42 + tf * s * 0.06);
+      tCtx.closePath();
+      tCtx.fill();
+    }
+    tCtx.globalAlpha = 1;
+
     // Label text
     tCtx.fillStyle = '#fff';
     tCtx.font = `bold ${Math.max(8, s * 0.12)}px 'Segoe UI', system-ui, sans-serif`;
@@ -767,6 +831,153 @@ window.AdSniperGame = (() => {
     tCtx.globalAlpha = 0.6;
     tCtx.strokeStyle = '#fff';
     tCtx.lineWidth = 2;
+    roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
+    tCtx.stroke();
+    tCtx.globalAlpha = 1;
+
+    return tCanvas;
+  }
+
+  function createShinyBirdTexture(ad, size) {
+    const tCanvas = document.createElement('canvas');
+    const s = Math.round(size);
+    tCanvas.width = s;
+    tCanvas.height = s;
+    const tCtx = tCanvas.getContext('2d');
+
+    // Golden gradient body
+    const grad = tCtx.createLinearGradient(0, 0, s, s);
+    grad.addColorStop(0, '#fde68a');
+    grad.addColorStop(0.5, '#f59e0b');
+    grad.addColorStop(1, '#fbbf24');
+
+    tCtx.fillStyle = grad;
+    tCtx.globalAlpha = 0.95;
+    roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
+    tCtx.fill();
+
+    // Shimmer highlight
+    tCtx.globalAlpha = 0.45;
+    tCtx.fillStyle = '#fff';
+    roundRect(tCtx, s * 0.1, s * 0.08, s * 0.8, s * 0.32, s * 0.1);
+    tCtx.fill();
+    tCtx.globalAlpha = 1;
+
+    // Star symbol
+    tCtx.fillStyle = 'rgba(255,255,255,0.7)';
+    tCtx.font = `bold ${Math.max(12, s * 0.32)}px 'Segoe UI', system-ui, sans-serif`;
+    tCtx.textAlign = 'center';
+    tCtx.textBaseline = 'middle';
+    tCtx.fillText('★', s / 2, s * 0.36);
+
+    // Eye
+    tCtx.fillStyle = '#fff';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.68, s * 0.24, s * 0.055, 0, Math.PI * 2);
+    tCtx.fill();
+    tCtx.fillStyle = '#000';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.7, s * 0.24, s * 0.028, 0, Math.PI * 2);
+    tCtx.fill();
+
+    // Beak
+    tCtx.fillStyle = '#ea580c';
+    tCtx.beginPath();
+    tCtx.moveTo(s * 0.88, s * 0.3);
+    tCtx.lineTo(s * 1.02, s * 0.35);
+    tCtx.lineTo(s * 0.88, s * 0.4);
+    tCtx.closePath();
+    tCtx.fill();
+
+    // Label
+    tCtx.fillStyle = '#fff';
+    tCtx.font = `bold ${Math.max(7, s * 0.1)}px 'Segoe UI', system-ui, sans-serif`;
+    const labelText = ad.label.length > 12 ? ad.label.slice(0, 10) + '…' : ad.label;
+    tCtx.fillText(labelText, s / 2, s * 0.72);
+
+    tCtx.fillStyle = 'rgba(255,255,255,0.6)';
+    tCtx.font = `${Math.max(6, s * 0.08)}px 'Segoe UI', system-ui, sans-serif`;
+    tCtx.fillText(ad.tagName, s / 2, s * 0.85);
+
+    // Golden border
+    tCtx.strokeStyle = '#fbbf24';
+    tCtx.lineWidth = 3;
+    tCtx.globalAlpha = 0.85;
+    roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
+    tCtx.stroke();
+    tCtx.globalAlpha = 1;
+
+    return tCanvas;
+  }
+
+  function createRedFlasherTexture(ad, size) {
+    const tCanvas = document.createElement('canvas');
+    const s = Math.round(size);
+    tCanvas.width = s;
+    tCanvas.height = s;
+    const tCtx = tCanvas.getContext('2d');
+
+    // Dark red radial gradient body
+    const grad = tCtx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s * 0.6);
+    grad.addColorStop(0, '#ef4444');
+    grad.addColorStop(1, '#991b1b');
+
+    tCtx.fillStyle = grad;
+    tCtx.globalAlpha = 0.95;
+    roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
+    tCtx.fill();
+    tCtx.globalAlpha = 1;
+
+    // Warning symbol
+    tCtx.fillStyle = 'rgba(255,255,255,0.8)';
+    tCtx.font = `bold ${Math.max(12, s * 0.32)}px 'Segoe UI', system-ui, sans-serif`;
+    tCtx.textAlign = 'center';
+    tCtx.textBaseline = 'middle';
+    tCtx.fillText('⚠', s / 2, s * 0.36);
+
+    // Angry eyes
+    tCtx.fillStyle = '#fff';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.38, s * 0.26, s * 0.055, 0, Math.PI * 2);
+    tCtx.fill();
+    tCtx.beginPath();
+    tCtx.arc(s * 0.62, s * 0.26, s * 0.055, 0, Math.PI * 2);
+    tCtx.fill();
+    // Red pupils
+    tCtx.fillStyle = '#dc2626';
+    tCtx.beginPath();
+    tCtx.arc(s * 0.4, s * 0.26, s * 0.028, 0, Math.PI * 2);
+    tCtx.fill();
+    tCtx.beginPath();
+    tCtx.arc(s * 0.64, s * 0.26, s * 0.028, 0, Math.PI * 2);
+    tCtx.fill();
+    // Angry eyebrows
+    tCtx.strokeStyle = '#fff';
+    tCtx.lineWidth = Math.max(1.5, s * 0.025);
+    tCtx.beginPath();
+    tCtx.moveTo(s * 0.28, s * 0.2);
+    tCtx.lineTo(s * 0.46, s * 0.16);
+    tCtx.stroke();
+    tCtx.beginPath();
+    tCtx.moveTo(s * 0.72, s * 0.2);
+    tCtx.lineTo(s * 0.54, s * 0.16);
+    tCtx.stroke();
+
+    // Label
+    tCtx.fillStyle = '#fecaca';
+    tCtx.font = `bold ${Math.max(7, s * 0.1)}px 'Segoe UI', system-ui, sans-serif`;
+    tCtx.textAlign = 'center';
+    const labelText = ad.label.length > 12 ? ad.label.slice(0, 10) + '…' : ad.label;
+    tCtx.fillText(labelText, s / 2, s * 0.72);
+
+    tCtx.fillStyle = 'rgba(254,202,202,0.6)';
+    tCtx.font = `${Math.max(6, s * 0.08)}px 'Segoe UI', system-ui, sans-serif`;
+    tCtx.fillText(ad.tagName, s / 2, s * 0.85);
+
+    // Red border
+    tCtx.strokeStyle = '#ef4444';
+    tCtx.lineWidth = 3;
+    tCtx.globalAlpha = 0.9;
     roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
     tCtx.stroke();
     tCtx.globalAlpha = 1;
@@ -800,11 +1011,30 @@ window.AdSniperGame = (() => {
     for (const bird of birds) {
       if (!bird.alive) continue;
 
-      // Requirement: Change movement of the bird every 3 sec by using the logic:
-      // random number between 1-360 where number represents the direction of bird.
-      if (now - bird.lastDirChange >= 3000) {
-        bird.directionAngle = Math.floor(Math.random() * 360) + 1;
+      // Type-specific movement logic
+      if (bird.type === 'red_flasher') {
+        // Red flasher tracks toward player crosshair
+        const dx = mouseX - bird.x;
+        const dy = mouseY - bird.y;
+        bird.directionAngle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360 || 1;
         bird.lastDirChange = now;
+        // Speed ramp when close
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 300) {
+          bird.speed = Math.min(bird.speed * 1.003, BIRD_SPEED * RED_BIRD_SPEED_MULT * 2.5);
+        }
+      } else if (bird.type === 'shiny') {
+        // Shiny birds change direction faster (every 1.5s)
+        if (now - bird.lastDirChange >= SHINY_DIR_CHANGE_MS) {
+          bird.directionAngle = Math.floor(Math.random() * 360) + 1;
+          bird.lastDirChange = now;
+        }
+      } else {
+        // Normal: change direction every 3 sec
+        if (now - bird.lastDirChange >= 3000) {
+          bird.directionAngle = Math.floor(Math.random() * 360) + 1;
+          bird.lastDirChange = now;
+        }
       }
 
       // Convert direction angle to radians
@@ -1023,6 +1253,177 @@ window.AdSniperGame = (() => {
     ctx.globalAlpha = 1;
   }
 
+  // ═══════════════════════════════════════════════
+  //  CLOUD SYSTEM
+  // ═══════════════════════════════════════════════
+
+  function initClouds(vw, vh) {
+    clouds = [];
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+      clouds.push({
+        x: Math.random() * (vw + 400) - 200,
+        y: Math.random() * vh * 0.6 + 20,
+        w: 120 + Math.random() * 200,
+        h: 30 + Math.random() * 40,
+        speed: CLOUD_MIN_SPEED + Math.random() * (CLOUD_MAX_SPEED - CLOUD_MIN_SPEED),
+        alpha: 0.03 + Math.random() * 0.06,
+      });
+    }
+  }
+
+  function updateClouds(vw, dt) {
+    for (const c of clouds) {
+      c.x += c.speed * dt;
+      if (c.x > vw + c.w) {
+        c.x = -c.w - Math.random() * 200;
+        c.y = Math.random() * (canvas ? canvas.height * 0.6 : 500) + 20;
+      }
+    }
+  }
+
+  function renderClouds() {
+    for (const c of clouds) {
+      ctx.globalAlpha = c.alpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Secondary puff
+      ctx.beginPath();
+      ctx.ellipse(c.x - c.w * 0.25, c.y + c.h * 0.15, c.w * 0.35, c.h * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(c.x + c.w * 0.2, c.y + c.h * 0.1, c.w * 0.3, c.h * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ═══════════════════════════════════════════════
+  //  WEAPON SYSTEM
+  // ═══════════════════════════════════════════════
+
+  function switchWeapon(weaponName) {
+    if (weaponName === currentWeapon) return;
+    if (!WEAPONS[weaponName]) return;
+    currentWeapon = weaponName;
+    reloadTimer = 0;
+    weaponCooldown = 0;
+    // Notification
+    particles.push({
+      x: canvas ? canvas.width / 2 : 400,
+      y: canvas ? canvas.height - 60 : 500,
+      vx: 0, vy: -1,
+      life: 50, maxLife: 50,
+      isText: true,
+      text: `🔫 ${weaponName.toUpperCase()} equipped!`,
+      color: currentWeapon === 'magnum' ? '#ef4444' : currentWeapon === 'shotgun' ? '#f97316' : COLOR_GREEN,
+      size: 0,
+    });
+  }
+
+  function cycleWeapon() {
+    const idx = WEAPON_ORDER.indexOf(currentWeapon);
+    const next = WEAPON_ORDER[(idx + 1) % WEAPON_ORDER.length];
+    switchWeapon(next);
+  }
+
+  function tryReload() {
+    const w = WEAPONS[currentWeapon];
+    if (w.reloadTime <= 0) return;
+    if (ammo[currentWeapon] >= w.maxAmmo) return;
+    if (reloadTimer > 0) return;
+    reloadTimer = w.reloadTime;
+  }
+
+  function finishReload() {
+    const w = WEAPONS[currentWeapon];
+    ammo[currentWeapon] = w.maxAmmo;
+    reloadTimer = 0;
+  }
+
+  // ═══════════════════════════════════════════════
+  //  HEALTH SYSTEM
+  // ═══════════════════════════════════════════════
+
+  function takeDamage(amount) {
+    const now = Date.now();
+    if (now - lastDamageTime < INVINCIBILITY_MS) return;
+    playerHealth = Math.max(0, playerHealth - amount);
+    damageFlashTimer = DAMAGE_FLASH_FRAMES;
+    lastDamageTime = now;
+    screenShakeX = (Math.random() - 0.5) * 12;
+    screenShakeY = (Math.random() - 0.5) * 12;
+    // Damage text
+    particles.push({
+      x: canvas ? canvas.width / 2 : 400,
+      y: canvas ? canvas.height / 2 : 300,
+      vx: 0, vy: -1.5,
+      life: 55, maxLife: 55,
+      isText: true,
+      text: `💥 -${amount} HP!`,
+      color: COLOR_RED,
+      size: 0,
+    });
+    if (playerHealth <= 0) {
+      gameState = 'GAME_OVER';
+      gameOverAlpha = 0;
+    }
+  }
+
+  function checkRedBirdAttacks() {
+    for (const bird of birds) {
+      if (!bird.alive || bird.type !== 'red_flasher') continue;
+      const dx = mouseX - bird.x;
+      const dy = mouseY - bird.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist <= RED_BIRD_ATTACK_RANGE) {
+        const frames = (redBirdProximity.get(bird.id) || 0) + 1;
+        redBirdProximity.set(bird.id, frames);
+        if (frames >= RED_BIRD_ATTACK_FRAMES) {
+          // Attack!
+          takeDamage(RED_BIRD_DAMAGE);
+          bird.alive = false;
+          birdsHit++;
+          spawnParticles(bird.x, bird.y, '#ef4444');
+          redBirdProximity.delete(bird.id);
+          particles.push({
+            x: bird.x, y: bird.y - 30,
+            vx: 0, vy: -1.2,
+            life: 55, maxLife: 55,
+            isText: true,
+            text: '💥 RED BIRD ATTACK!',
+            color: COLOR_RED,
+            size: 0,
+          });
+          // Check if all birds done
+          if (birds.every(b => !b.alive)) {
+            gameState = 'GAME_OVER';
+            gameOverAlpha = 0;
+          }
+        }
+      } else {
+        redBirdProximity.delete(bird.id);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  //  SCREEN SHAKE
+  // ═══════════════════════════════════════════════
+
+  function updateScreenShake() {
+    screenShakeX *= SCREEN_SHAKE_DECAY;
+    screenShakeY *= SCREEN_SHAKE_DECAY;
+    if (Math.abs(screenShakeX) < 0.3) screenShakeX = 0;
+    if (Math.abs(screenShakeY) < 0.3) screenShakeY = 0;
+  }
+
+  function triggerScreenShake(intensity) {
+    screenShakeX = (Math.random() - 0.5) * intensity;
+    screenShakeY = (Math.random() - 0.5) * intensity;
+  }
+
   let _lastScore = 0;
   function getLastScore() { return _lastScore; }
 
@@ -1049,16 +1450,53 @@ window.AdSniperGame = (() => {
     bestCombo = Math.max(bestCombo, combo);
     lastHitTime = now;
 
-    const multiplier = getComboMultiplier();
-    const points = bird.points * multiplier;
+    const comboMult = getComboMultiplier();
+    const weaponMult = WEAPONS[currentWeapon].scoreMult;
+    let typeMult = 1;
+
+    // Shiny bird: double points + weapon switch
+    if (bird.type === 'shiny') {
+      typeMult = 2;
+      cycleWeapon();
+      particles.push({
+        x: bird.x, y: bird.y - 40,
+        vx: 0, vy: -1.2,
+        life: 65, maxLife: 65,
+        isText: true,
+        text: '✨ SHINY! ×2 + Weapon Switch!',
+        color: '#fbbf24',
+        size: 0,
+      });
+    }
+
+    // Red flasher: danger bonus
+    if (bird.type === 'red_flasher') {
+      typeMult = 1.5;
+      redBirdProximity.delete(bird.id);
+      particles.push({
+        x: bird.x, y: bird.y - 40,
+        vx: 0, vy: -1.2,
+        life: 55, maxLife: 55,
+        isText: true,
+        text: '🔴 THREAT NEUTRALIZED!',
+        color: '#ef4444',
+        size: 0,
+      });
+    }
+
+    const points = Math.round(bird.points * comboMult * weaponMult * typeMult);
     _lastScore = points;
     score += points;
 
     // Spawn explosion
-    spawnParticles(bird.x, bird.y, bird.color);
+    spawnParticles(bird.x, bird.y, bird.type === 'shiny' ? '#fbbf24' : bird.type === 'red_flasher' ? '#ef4444' : bird.color);
 
-    // Check game over
-    if (birdsHit >= totalBirds) {
+    // Screen shake on hit
+    triggerScreenShake(currentWeapon === 'magnum' ? 8 : currentWeapon === 'shotgun' ? 6 : 3);
+    muzzleFlashTimer = 4;
+
+    // Check game over (victory)
+    if (birds.every(b => !b.alive)) {
       gameState = 'GAME_OVER';
       gameOverAlpha = 0;
     }

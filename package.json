@@ -1,6 +1,6 @@
 {
   "name": "TestProject",
-  "version": "1.0.0",
+  "version": "2.2.0",
   "description": "> **Surgical Ad Blocking, Cookie Control, On-Device AI Personal Assistant (Gemini Nano), Scratchpad & Todo Lists, and Gamified Ad Sniping for Chrome (Manifest V3)**",
   "main": "test.js",
   "scripts": {
@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/anshal92/AdSniper#readme",
   "devDependencies": {
+    "@babel/core": "^8.0.6",
     "@babel/eslint-parser": "^7.29.9",
     "eslint": "^7.32.0"
   }
