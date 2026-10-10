@@ -236,6 +236,10 @@ const RESOURCE_TYPES_SW = [
 ];
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'UPDATE_ICON') {
+    updateExtensionIcon();
+    return;
+  }
   if (message.type === 'ADD_BLOCK_RULE') {
     (async () => {
       try {
@@ -578,40 +582,6 @@ chrome.runtime.onSuspend.addListener(() => {
   if (typeof flushBlockCounts === 'function') flushBlockCounts();
 });
 
-async function cleanupOrphanedData() {
-  try {
-    const allStorage = await chrome.storage.local.get(null);
-    const keysToRemove = [];
-    const openTabs = await chrome.tabs.query({});
-    const openTabIds = new Set(openTabs.map(t => t.id));
-
-    for (const key of Object.keys(allStorage)) {
-      if (key.startsWith('blockCount_')) {
-        keysToRemove.push(key);
-      } else if (key.startsWith('requests_')) {
-        const tabIdStr = key.replace('requests_', '');
-        if (tabIdStr !== 'global' && !openTabIds.has(Number(tabIdStr))) {
-          keysToRemove.push(key);
-        }
-      }
-    }
-
-    if (keysToRemove.length > 0) {
-      await chrome.storage.local.remove(keysToRemove);
-      console.log(`[AdSniper] Storage cleanup: removed ${keysToRemove.length} stale/legacy keys.`);
-    }
-  } catch (err) {
-    console.warn('[AdSniper] Storage cleanup failed:', err);
-  }
-}
-
-chrome.runtime.onStartup.addListener(() => cleanupOrphanedData());
-
-chrome.runtime.onSuspend.addListener(() => {
-  // Ensure we don't lose batched in-memory data when the ephemeral MV3 worker goes to sleep
-  flushRequests();
-  if (typeof flushBlockCounts === 'function') flushBlockCounts();
-});
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Set storage defaults on first install
@@ -682,3 +652,148 @@ async function fetchAndStoreAdPatterns() {
     console.warn('[AdSniper] Failed to load bundled fallback:', err.message);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Icon animation — blinks the extension icon when any blocker is active.
+// Uses chrome.alarms (not setInterval) so it survives MV3 SW termination.
+// ---------------------------------------------------------------------------
+
+const ICON_ALARM_NAME = 'adsniper-icon-blink';
+
+/** Called after any blocking state change — starts or stops the blink alarm. */
+async function updateExtensionIcon() {
+  const { massBlockActive = false, newTabBlockActive = false } =
+    await chrome.storage.local.get(['massBlockActive', 'newTabBlockActive']);
+  const rules = await chrome.declarativeNetRequest.getDynamicRules();
+  const isActive = massBlockActive || newTabBlockActive || rules.length > 0;
+
+  if (isActive) {
+    // Ensure the alarm is running (idempotent — Chrome ignores duplicate creates)
+    chrome.alarms.create(ICON_ALARM_NAME, { periodInMinutes: 1 / 60 }); // ~1 s
+    // Draw immediately so there's no visible lag
+    await _drawAnimFrame();
+  } else {
+    // Stop blinking and revert to gray idle icon
+    await chrome.alarms.clear(ICON_ALARM_NAME);
+    await chrome.storage.local.set({ _iconFrame: 0 });
+    await _drawIdleIcon();
+  }
+}
+
+/** Fired by the alarm every ~1 second — advances animation frame. */
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== ICON_ALARM_NAME) return;
+  // Re-check state each tick so we stop automatically if blockers were disabled
+  const { massBlockActive = false, newTabBlockActive = false } =
+    await chrome.storage.local.get(['massBlockActive', 'newTabBlockActive']);
+  const rules = await chrome.declarativeNetRequest.getDynamicRules();
+  const isActive = massBlockActive || newTabBlockActive || rules.length > 0;
+
+  if (!isActive) {
+    await chrome.alarms.clear(ICON_ALARM_NAME);
+    await _drawIdleIcon();
+    return;
+  }
+  await _drawAnimFrame();
+});
+
+/** Draws one blink frame — alternates between bright-red and dim-red. */
+async function _drawAnimFrame() {
+  const { _iconFrame = 0 } = await chrome.storage.local.get('_iconFrame');
+  const nextFrame = _iconFrame + 1;
+  await chrome.storage.local.set({ _iconFrame: nextFrame });
+
+  // Two-phase blink: even frames = bright red, odd frames = dim red
+  const bright = nextFrame % 2 === 0;
+  try {
+    await chrome.action.setIcon({
+      imageData: {
+        16:  _drawCrosshair(16,  bright),
+        32:  _drawCrosshair(32,  bright),
+        48:  _drawCrosshair(48,  bright),
+        128: _drawCrosshair(128, bright),
+      },
+    });
+  } catch (e) {
+    console.warn('[AdSniper] setIcon failed:', e.message);
+  }
+}
+
+/** Draws the gray idle icon (no blockers active). */
+async function _drawIdleIcon() {
+  try {
+    await chrome.action.setIcon({
+      imageData: {
+        16:  _drawCrosshair(16,  false, true),
+        32:  _drawCrosshair(32,  false, true),
+        48:  _drawCrosshair(48,  false, true),
+        128: _drawCrosshair(128, false, true),
+      },
+    });
+  } catch (e) {
+    console.warn('[AdSniper] setIcon (idle) failed:', e.message);
+  }
+}
+
+/**
+ * Draws a crosshair icon onto an OffscreenCanvas and returns ImageData.
+ * @param {number}  size   - Canvas size (16, 32, 48, or 128)
+ * @param {boolean} bright - true = full-opacity red (blink-on), false = dim red (blink-off)
+ * @param {boolean} idle   - true = gray outline (no blockers active)
+ */
+function _drawCrosshair(size, bright, idle = false) {
+  const canvas = new OffscreenCanvas(size, size);
+  const ctx    = canvas.getContext('2d');
+  const cx     = size / 2;
+  const r      = size * 0.38;
+
+  if (idle) {
+    // --- Gray outline circle ---
+    ctx.beginPath();
+    ctx.arc(cx, cx, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#6b6b88';
+    ctx.lineWidth   = Math.max(1, size * 0.07);
+    ctx.stroke();
+
+    // Crosshair
+    ctx.strokeStyle = '#6b6b88';
+    ctx.lineWidth   = Math.max(1, size * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(cx, cx - r * 0.65); ctx.lineTo(cx, cx + r * 0.65);
+    ctx.moveTo(cx - r * 0.65, cx); ctx.lineTo(cx + r * 0.65, cx);
+    ctx.stroke();
+  } else {
+    // --- Red filled circle (bright or dim) ---
+    const alpha = bright ? 1.0 : 0.35;
+    ctx.beginPath();
+    ctx.arc(cx, cx, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(220, 38, 38, ${alpha})`;
+    ctx.fill();
+
+    // Outer glow ring (only on bright frame)
+    if (bright) {
+      ctx.beginPath();
+      ctx.arc(cx, cx, r + size * 0.07, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+      ctx.lineWidth   = Math.max(1, size * 0.05);
+      ctx.stroke();
+    }
+
+    // White crosshair lines
+    ctx.strokeStyle = bright ? '#ffffff' : 'rgba(255,255,255,0.5)';
+    ctx.lineWidth   = Math.max(1, size * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(cx, cx - r * 0.65); ctx.lineTo(cx, cx + r * 0.65);
+    ctx.moveTo(cx - r * 0.65, cx); ctx.lineTo(cx + r * 0.65, cx);
+    ctx.stroke();
+
+    // Center dot
+    ctx.beginPath();
+    ctx.arc(cx, cx, Math.max(1, size * 0.06), 0, Math.PI * 2);
+    ctx.fillStyle = bright ? '#ffffff' : 'rgba(255,255,255,0.5)';
+    ctx.fill();
+  }
+
+  return ctx.getImageData(0, 0, size, size);
+}
+
