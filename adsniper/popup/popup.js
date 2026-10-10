@@ -91,6 +91,22 @@ window.toggleMassBlock = toggleMassBlock;
 // Entry point
 // ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Detect if we're in a full tab (vs popup)
+  try {
+    const currentTab = await chrome.tabs.getCurrent();
+    if (currentTab) {
+      document.body.classList.add('full-tab');
+    }
+  } catch { /* ignore */ }
+
+  const openNewTabBtn = document.getElementById('open-newtab-btn');
+  if (openNewTabBtn) {
+    openNewTabBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html') });
+      window.close();
+    });
+  }
+
   // Load AI Chat History
   const { astHistory: savedAstHistory = [] } = await chrome.storage.local.get('astHistory');
   if (savedAstHistory && savedAstHistory.length > 0) {
@@ -503,6 +519,7 @@ async function syncBadge() {
   const rules = await chrome.declarativeNetRequest.getDynamicRules();
   await chrome.action.setBadgeText({ text: rules.length > 0 ? String(rules.length) : '' });
   await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+  chrome.runtime.sendMessage({ type: 'UPDATE_ICON' });
 }
 
 // ─────────────────────────────────────────────
@@ -659,13 +676,29 @@ async function toggleNewTabBlock() {
           addRules: [],
           removeRuleIds: newTabBlockRuleIds,
         });
-        await chrome.storage.local.remove(newTabBlockRuleIds.map((id) => `blockCount_${id}`));
+        
+        // Remove from blockCounts object instead of blockCount_${id} keys
+        const { blockCounts = {} } = await chrome.storage.local.get('blockCounts');
+        let countsChanged = false;
+        newTabBlockRuleIds.forEach((id) => {
+          if (blockCounts[id]) {
+            delete blockCounts[id];
+            countsChanged = true;
+          }
+        });
+        if (countsChanged) {
+          await chrome.storage.local.set({ blockCounts });
+        }
       }
       await chrome.storage.local.set({ newTabBlockActive: false, newTabBlockRuleIds: [] });
+      
+      try {
+        await sendToTab({ type: 'RESTORE_WINDOW_OPEN_OVERRIDE' });
+      } catch { /* ignore */ }
 
     } else {
       // ── Activate ────────────────────────────────────
-      const { adHosts = [] } = await chrome.storage.local.get('adHosts');
+      const { adHosts = [], adPatterns = [] } = await chrome.storage.local.get(['adHosts', 'adPatterns']);
 
       // Clean up any stale rules
       const { newTabBlockRuleIds: staleIds = [] } = await chrome.storage.local.get('newTabBlockRuleIds');
@@ -676,17 +709,29 @@ async function toggleNewTabBlock() {
         });
       }
 
-      // Build one DNR rule per ad host — only block main_frame navigations
+      // Build rules for both hosts and patterns
       const rules = [];
       let id = NEW_TAB_BLOCK_BASE_ID;
+      
       for (const host of adHosts) {
         if (!host) continue;
-        if (id >= 50000) break; // Stay within our ID range
+        if (id >= 50000) break; 
         rules.push({
           id: id++,
-          priority: 3, // Higher than mass-block (2) and user rules (1)
+          priority: 3, 
           action: { type: 'block' },
           condition: { urlFilter: `||${host}`, resourceTypes: ['main_frame'] },
+        });
+      }
+
+      for (const pattern of adPatterns) {
+        if (!pattern) continue;
+        if (id >= 50000) break;
+        rules.push({
+          id: id++,
+          priority: 3,
+          action: { type: 'block' },
+          condition: { urlFilter: pattern, resourceTypes: ['main_frame'] },
         });
       }
 
@@ -704,6 +749,11 @@ async function toggleNewTabBlock() {
         newTabBlockActive: true,
         newTabBlockRuleIds: rules.map((r) => r.id),
       });
+
+      // Inject window.open override to catch JS-based new tab opens
+      try {
+        await sendToTab({ type: 'INJECT_WINDOW_OPEN_OVERRIDE' });
+      } catch { /* Tab may not support content scripts */ }
     }
 
     await syncBadge();
@@ -1846,6 +1896,29 @@ async function initListsPanel() {
     todos = stored.astTodos;
   }
   renderTodos();
+
+  const listsContainer = document.querySelector('.lists-container');
+  const scratchpadExpand = document.getElementById('scratchpad-expand');
+  const todoExpand = document.getElementById('todo-expand');
+  const scratchpadHalf = document.getElementById('lists-scratchpad-half');
+  const todoHalf = document.getElementById('lists-todo-half');
+
+  function toggleExpand(halfElem, btnElem) {
+    if (halfElem.classList.contains('expanded-half')) {
+      halfElem.classList.remove('expanded-half');
+      listsContainer.classList.remove('has-expanded-child');
+      btnElem.textContent = '⤢'; // Expand icon
+      btnElem.title = 'Expand';
+    } else {
+      halfElem.classList.add('expanded-half');
+      listsContainer.classList.add('has-expanded-child');
+      btnElem.textContent = '✖'; // Close icon
+      btnElem.title = 'Collapse';
+    }
+  }
+
+  scratchpadExpand.addEventListener('click', () => toggleExpand(scratchpadHalf, scratchpadExpand));
+  todoExpand.addEventListener('click', () => toggleExpand(todoHalf, todoExpand));
 
   // Scratchpad events
   scratchpad.addEventListener('input', () => {

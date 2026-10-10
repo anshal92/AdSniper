@@ -1458,13 +1458,16 @@
     }
 
     /* ── LISTS PANEL ── */
-    #panel-lists {
-      /* Flex properties handled by .panel.active */
-    }
-    .lists-container {
+    #panel-lists.active {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      overflow: hidden;
+    }
+    .lists-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
       background: var(--bg);
     }
     .lists-half {
@@ -1472,6 +1475,14 @@
       display: flex;
       flex-direction: column;
       border-bottom: 1px solid var(--border);
+      min-height: 0;
+    }
+    
+    .lists-container.has-expanded-child .lists-half {
+      display: none;
+    }
+    .lists-container.has-expanded-child .lists-half.expanded-half {
+      display: flex;
     }
     .lists-header {
       display: flex;
@@ -1616,6 +1627,40 @@
     }
     #todo-add-btn:hover { background: #2563eb; }
 
+    /* Open in New Tab button */
+    .btn-open-newtab {
+      background: rgba(124,106,255,.1);
+      border: 1px solid rgba(124,106,255,.3);
+      border-radius: var(--radius);
+      color: var(--accent);
+      font-size: 14px;
+      font-weight: 700;
+      padding: 2px 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .btn-open-newtab:hover {
+      background: rgba(124,106,255,.25);
+      border-color: var(--accent);
+      box-shadow: 0 0 8px rgba(124,106,255,.3);
+    }
+
+    /* Full-tab mode */
+    body.full-tab {
+      width: 100vw;
+      height: 100vh;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    body.full-tab .panel.active { max-height: none; }
+    body.full-tab .list-container { max-height: 500px; }
+    body.full-tab .rules-container { max-height: 400px; }
+    body.full-tab .cookie-container { max-height: 600px; }
+    body.full-tab .ai-response-box { max-height: 500px; }
+    body.full-tab .ast-chat-history { max-height: 600px; }
+    body.full-tab .btn-open-newtab { display: none; }
   </style>
 </head>
 <body>
@@ -1630,6 +1675,7 @@
       <span class="sniping-newtab-label">New Tab</span>
     </label>
   </div>
+  <button id="open-newtab-btn" class="btn-open-newtab" title="Open AdSniper in a new tab">↗</button>
   <div id="header-badge" class="header-badge"></div>
 </header>
 
@@ -1856,17 +1902,23 @@
 <!-- PANEL: LISTS -->
 <div id="panel-lists" class="panel">
   <div class="lists-container">
-    <div class="lists-half">
+    <div id="lists-scratchpad-half" class="lists-half">
       <div class="lists-header">
         <span>📝 Scratchpad</span>
-        <button id="scratchpad-clear" class="lists-icon-btn">🗑️</button>
+        <div style="display: flex; gap: 10px;">
+          <button id="scratchpad-expand" class="lists-icon-btn" title="Expand">⤢</button>
+          <button id="scratchpad-clear" class="lists-icon-btn" title="Clear">🗑️</button>
+        </div>
       </div>
       <textarea id="scratchpad-input" class="scratchpad-textarea" placeholder="Type notes or have the AI save them here..."></textarea>
     </div>
-    <div class="lists-half">
+    <div id="lists-todo-half" class="lists-half">
       <div class="lists-header">
         <span>✅ Todo List</span>
-        <button id="todo-clear" class="lists-icon-btn">🗑️</button>
+        <div style="display: flex; gap: 10px;">
+          <button id="todo-expand" class="lists-icon-btn" title="Expand">⤢</button>
+          <button id="todo-clear" class="lists-icon-btn" title="Clear completed">🗑️</button>
+        </div>
       </div>
       <div id="todo-list" class="todo-list-container">
         <!-- Todo items will be injected here -->
