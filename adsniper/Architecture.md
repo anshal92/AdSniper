@@ -1,6 +1,6 @@
 # AdSniper — Architecture & Knowledge Base
 
-> **Version**: 2.2 | **Platform**: Chrome Extension (Manifest V3) | **Location**: `TestProject/adsniper/`
+> **Version**: 2.3 (Gemini 3.8) | **Platform**: Chrome Extension (Manifest V3) | **Location**: `TestProject/adsniper/`
 
 ---
 
@@ -206,6 +206,7 @@ adsniper/
 |---|---|
 | 1. webRequest logger | `webRequest.onBeforeRequest` (with `requestBody`) → `storage.local` |
 | 2. Tab cleanup | `tabs.onRemoved` → `storage.local.remove` |
+| 2b. Block new tab ads & popups | `tabs.onCreated`, `tabs.onUpdated` → domain extraction & cross-domain closure |
 | 3. Block-count + DOM msg | `declarativeNetRequest.onRuleMatchedDebug` → `tabs.sendMessage` |
 | 4. Cookie lock enforce | `cookies.onChanged` → `cookies.set` |
 | 5. ADD_BLOCK_RULE handler | `runtime.onMessage` → `declarativeNetRequest.updateDynamicRules` |
@@ -276,13 +277,15 @@ adsniper/
 | `getSystemPrompt()` | Retrieves active system prompt (honoring `customSystemPrompt` from storage or `DEFAULT_SYSTEM_PROMPT`) |
 | `getOrCreateSession()` | Lazy session initialization with AdBlocker MCP tool system prompt (temp 0.2) |
 | `getAssistantSession()` | Lazy session initialization with conversational Assistant system prompt (temp 0.7) |
-| `detectDirectIntent()` | Pre-dispatch regex intent classifier for instant 0ms command execution |
+| `detectDirectIntent()` | Pre-dispatch regex intent classifier for instant 0ms command execution in Ad Blocker |
+| `detectAssistantDirectIntent()` | Deterministic regex intent classifier for Personal Assistant (Todos, Scratchpad, Day Summary, Page Summarise) |
 | `extractActionJSON()` | Robust balanced-brace JSON extractor capable of parsing nested action arguments and native function syntax |
 | `cleanActionFromReply()` | Strips action blocks, raw tool JSON, and third-party recommendations from display text |
 | `generateAuditReport()` | Generates forensic audit report detailing intercepted ad calls and exfiltrated parameters |
 | `processPrompt()` | AdBlocker engine: executes prompt with intent pre-dispatch, streaming, and action parsing |
-| `processAssistantPrompt()` | Assistant engine: executes prompt with conversation history, token telemetry, speed tracking, and selective MCP tools |
-| `executeMcpAction()` | Dispatches actions: `tool_add_block_rule`, `tool_remove_overlay`, `tool_hide_element_css`, `tool_extract_clean_content`, `tool_inspect_requests`, `tool_toggle_feature`, `tool_execute_js_script`, `tool_add_scratchpad`, `tool_add_todo` |
+| `processAssistantPrompt()` | Assistant engine: executes prompt with conversation history, token telemetry, speed tracking, deterministic intent pre-dispatch, and selective MCP tools |
+| `_synthesizeSummary()` | Secondary language model synthesis pass to produce clean, concise summaries from extracted DOM data without external tabs |
+| `executeMcpAction()` | Dispatches actions: `tool_add_block_rule`, `tool_remove_overlay`, `tool_hide_element_css`, `tool_extract_clean_content`, `tool_inspect_requests`, `tool_toggle_feature`, `tool_execute_js_script`, `tool_add_scratchpad`, `tool_add_todo`, `tool_get_todos` |
 | `executeHeuristicFallback()` | Instant on-device heuristic execution when model is downloading or flags inactive |
 | `destroy()` | Explicitly calls `session.destroy()` to immediately reclaim RAM/VRAM |
 

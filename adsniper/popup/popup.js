@@ -93,8 +93,8 @@ window.toggleMassBlock = toggleMassBlock;
 document.addEventListener('DOMContentLoaded', async () => {
   // Detect if we're in a full tab (vs popup)
   try {
-    const currentTab = await chrome.tabs.getCurrent();
-    if (currentTab) {
+    const thisTab = await chrome.tabs.getCurrent();
+    if (thisTab) {
       document.body.classList.add('full-tab');
     }
   } catch { /* ignore */ }
@@ -105,29 +105,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html') });
       window.close();
     });
-  }
-
-  // Load AI Chat History
-  const { astHistory: savedAstHistory = [] } = await chrome.storage.local.get('astHistory');
-  if (savedAstHistory && savedAstHistory.length > 0) {
-    astHistory = savedAstHistory;
-    const chatContainer = document.getElementById('ast-chat');
-    if (chatContainer) {
-      for (const msg of astHistory) {
-        if (msg.role === 'user') {
-          const uDiv = document.createElement('div');
-          uDiv.className = 'ast-message ast-user';
-          uDiv.textContent = msg.content;
-          chatContainer.appendChild(uDiv);
-        } else {
-          const bDiv = document.createElement('div');
-          bDiv.className = 'ast-message ast-bot';
-          bDiv.innerHTML = formatAIOutput(msg.content);
-          chatContainer.appendChild(bDiv);
-        }
-      }
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
   }
   // Identify active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -241,8 +218,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Auto-refresh every 2 s (pauses during inline edits)
   refreshTimer = setInterval(async () => {
     if (editingActive) return;
-    if (currentTab === 'adblocker') await refreshAdBlocker();
-    else await refreshCookies();
+    switch (currentTab) {
+      case 'adblocker':
+        await refreshAdBlocker();
+        break;
+      case 'cookies':
+        await refreshCookies();
+        break;
+      default:
+        break;
+    }
   }, 2000);
   
   await initPersonalAssistant();
@@ -660,27 +645,37 @@ async function updateMassBlockButton() {
  * Creates DNR rules that block main_frame navigation to known ad domains.
  * This prevents ads that open new tabs/windows from loading.
  * Uses rule IDs 40001–49999 (separate from mass-block 50001+).
+ *
+ * @param {boolean|null} explicitState - If provided, sets the state directly instead of toggling.
  */
-async function toggleNewTabBlock() {
+async function toggleNewTabBlock(explicitState = null) {
   const btn = document.getElementById('new-tab-block-btn');
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
 
   try {
     const { newTabBlockActive = false } = await chrome.storage.local.get('newTabBlockActive');
+    const shouldActivate = (explicitState !== null && typeof explicitState === 'boolean')
+      ? explicitState
+      : !newTabBlockActive;
 
-    if (newTabBlockActive) {
+    // Direct DNR query to find all active new-tab-block rules (40001–49999)
+    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const existingNewTabIds = existingRules
+      .filter((r) => r.id >= NEW_TAB_BLOCK_BASE_ID && r.id < MASS_BLOCK_BASE_ID)
+      .map((r) => r.id);
+
+    if (!shouldActivate) {
       // ── Deactivate ──────────────────────────────────
-      const { newTabBlockRuleIds = [] } = await chrome.storage.local.get('newTabBlockRuleIds');
-      if (newTabBlockRuleIds.length > 0) {
+      if (existingNewTabIds.length > 0) {
         await chrome.declarativeNetRequest.updateDynamicRules({
           addRules: [],
-          removeRuleIds: newTabBlockRuleIds,
+          removeRuleIds: existingNewTabIds,
         });
-        
-        // Remove from blockCounts object instead of blockCount_${id} keys
+
+        // Clean up stored block counts for these rules
         const { blockCounts = {} } = await chrome.storage.local.get('blockCounts');
         let countsChanged = false;
-        newTabBlockRuleIds.forEach((id) => {
+        existingNewTabIds.forEach((id) => {
           if (blockCounts[id]) {
             delete blockCounts[id];
             countsChanged = true;
@@ -691,69 +686,41 @@ async function toggleNewTabBlock() {
         }
       }
       await chrome.storage.local.set({ newTabBlockActive: false, newTabBlockRuleIds: [] });
-      
-      try {
-        await sendToTab({ type: 'RESTORE_WINDOW_OPEN_OVERRIDE' });
-      } catch { /* ignore */ }
 
     } else {
       // ── Activate ────────────────────────────────────
-      const { adHosts = [], adPatterns = [] } = await chrome.storage.local.get(['adHosts', 'adPatterns']);
+      const { adHosts = [] } = await chrome.storage.local.get('adHosts');
 
-      // Clean up any stale rules
-      const { newTabBlockRuleIds: staleIds = [] } = await chrome.storage.local.get('newTabBlockRuleIds');
-      if (staleIds.length > 0) {
-        await chrome.declarativeNetRequest.updateDynamicRules({
-          addRules: [],
-          removeRuleIds: staleIds,
-        });
-      }
-
-      // Build rules for both hosts and patterns
+      // Build one DNR rule per ad host — only block main_frame navigations (IDs 40001–49999)
       const rules = [];
       let id = NEW_TAB_BLOCK_BASE_ID;
-      
+
       for (const host of adHosts) {
         if (!host) continue;
-        if (id >= 50000) break; 
+        if (id >= MASS_BLOCK_BASE_ID) break;
         rules.push({
           id: id++,
-          priority: 3, 
+          priority: 3,
           action: { type: 'block' },
           condition: { urlFilter: `||${host}`, resourceTypes: ['main_frame'] },
         });
       }
 
-      for (const pattern of adPatterns) {
-        if (!pattern) continue;
-        if (id >= 50000) break;
-        rules.push({
-          id: id++,
-          priority: 3,
-          action: { type: 'block' },
-          condition: { urlFilter: pattern, resourceTypes: ['main_frame'] },
-        });
-      }
-
       if (rules.length === 0) {
-        alert('No ad patterns loaded yet. Try reloading the extension.');
+        alert('No ad hosts loaded yet. Try reloading the extension.');
         return;
       }
 
+      // Atomically remove any existing 40001–49999 rules and add new ones to prevent duplicate ID crashes
       await chrome.declarativeNetRequest.updateDynamicRules({
         addRules: rules,
-        removeRuleIds: [],
+        removeRuleIds: existingNewTabIds,
       });
 
       await chrome.storage.local.set({
         newTabBlockActive: true,
         newTabBlockRuleIds: rules.map((r) => r.id),
       });
-
-      // Inject window.open override to catch JS-based new tab opens
-      try {
-        await sendToTab({ type: 'INJECT_WINDOW_OPEN_OVERRIDE' });
-      } catch { /* Tab may not support content scripts */ }
     }
 
     await syncBadge();
@@ -762,9 +729,22 @@ async function toggleNewTabBlock() {
 
   } catch (err) {
     console.error('[AdSniper] New-tab-block toggle failed:', err);
+    // Auto-recovery: if a unique ID error occurred, wipe rules in range and reset
+    try {
+      const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+      const orphanIds = existingRules
+        .filter((r) => r.id >= NEW_TAB_BLOCK_BASE_ID && r.id < MASS_BLOCK_BASE_ID)
+        .map((r) => r.id);
+      if (orphanIds.length > 0) {
+        await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [], removeRuleIds: orphanIds });
+      }
+      await chrome.storage.local.set({ newTabBlockActive: false, newTabBlockRuleIds: [] });
+      await updateNewTabBlockButton();
+      await syncBadge();
+    } catch { /* ignore recovery error */ }
     alert(`Error: ${err.message}`);
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -774,6 +754,7 @@ async function updateNewTabBlockButton() {
     await chrome.storage.local.get(['newTabBlockActive', 'newTabBlockRuleIds']);
 
   const btn = document.getElementById('new-tab-block-btn');
+  if (!btn) return;
 
   if (newTabBlockActive) {
     btn.classList.add('active');
@@ -1112,7 +1093,11 @@ async function handleAISend(overridePrompt) {
     }
   } catch (err) {
     console.error('[AdSniper AI] Error processing request:', err);
-    responseText.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
+    const errP = document.createElement('p');
+    errP.style.color = 'var(--red)';
+    errP.textContent = `Error: ${err.message}`;
+    responseText.innerHTML = '';
+    responseText.appendChild(errP);
   } finally {
     stopThinkingAnimation();
     sendBtn.disabled = false;
@@ -1551,7 +1536,11 @@ async function handleSnipingGame() {
         });
       }
       if (rules.length > 0) {
-        await chrome.declarativeNetRequest.updateDynamicRules({ addRules: rules, removeRuleIds: [] });
+        const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+        const existingNewTabIds = existingRules
+          .filter((r) => r.id >= NEW_TAB_BLOCK_BASE_ID && r.id < MASS_BLOCK_BASE_ID)
+          .map((r) => r.id);
+        await chrome.declarativeNetRequest.updateDynamicRules({ addRules: rules, removeRuleIds: existingNewTabIds });
         activeNewTabRuleIds = rules.map((r) => r.id);
       }
     }
@@ -1726,7 +1715,11 @@ async function initPersonalAssistant() {
       const chatText = astHistory.map(msg => msg.role + ': ' + msg.content).join('\n\n');
       const blob = new Blob([chatText], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
-      chrome.downloads.download({ url: url, filename: 'assistant_chat.txt' });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'assistant_chat_' + Date.now() + '.txt';
+      a.click();
+      URL.revokeObjectURL(url);
     });
   }
 
@@ -1866,7 +1859,11 @@ async function handleAstSend() {
     }
   } catch (err) {
     stopThinkingAnimation();
-    botDiv.innerHTML = `<p style="color:var(--red);">Error: ${err.message}</p>`;
+    const errP = document.createElement('p');
+    errP.style.color = 'var(--red)';
+    errP.textContent = `Error: ${err.message}`;
+    botDiv.innerHTML = '';
+    botDiv.appendChild(errP);
   }
   
   astIsGenerating = false;
@@ -1928,6 +1925,74 @@ async function initListsPanel() {
     scratchpad.value = '';
     chrome.storage.local.set({ astScratchpad: '' });
   });
+
+  // Convert scratchpad notes to todos via AI
+  const scratchConvert = document.getElementById('scratchpad-convert-todos');
+  if (scratchConvert) {
+    scratchConvert.addEventListener('click', async () => {
+      const notes = scratchpad.value.trim();
+      if (!notes) return;
+      // Use the AI client to parse notes into todo items
+      if (!window.GeminiNanoClient) {
+        alert('AI client not available. Enable AI first.');
+        return;
+      }
+      scratchConvert.disabled = true;
+      scratchConvert.textContent = '⏳';
+      try {
+        const client = window.GeminiNanoClient.getInstance();
+        const result = await client.processAssistantPrompt(
+          `Extract each actionable task from these notes as a JSON array of objects with "task" and "description" fields. Notes:\n${notes}`,
+          [], { activeTabId, activeTabUrl, recentRequests: [] }
+        );
+        // Parse the AI response for todo items
+        const match = (result.reply || '').match(/\[[\s\S]*\]/);
+        if (match) {
+          const items = JSON.parse(match[0]);
+          for (const item of items) {
+            if (item.task) {
+              todos.push({
+                id: Date.now() + Math.random(),
+                text: item.task,
+                done: false,
+                createdAt: new Date().toISOString(),
+                description: item.description || '',
+                eta: null,
+              });
+            }
+          }
+          await chrome.storage.local.set({ astTodos: todos });
+          renderTodos();
+          const statusElem = document.getElementById('scratchpad-status');
+          if (statusElem) {
+            statusElem.textContent = '✓ Converted to Todos';
+            setTimeout(() => { statusElem.textContent = ''; }, 3000);
+          }
+        }
+      } catch (err) {
+        console.error('[AdSniper] Convert to todos failed:', err);
+      } finally {
+        scratchConvert.disabled = false;
+        scratchConvert.textContent = '🪄';
+      }
+    });
+  }
+
+  // Send scratchpad notes to Assistant chat
+  const scratchToChat = document.getElementById('scratchpad-to-chat');
+  if (scratchToChat) {
+    scratchToChat.addEventListener('click', () => {
+      const notes = scratchpad.value.trim();
+      if (!notes) return;
+      // Switch to the assistant tab and pre-fill the input
+      switchTab('assistant');
+      const astInput = document.getElementById('ast-input');
+      if (astInput) {
+        astInput.value = notes;
+        astInput.focus();
+      }
+    });
+  }
 
   // Initialize ETA to today with limits
   const etaInputElem = document.getElementById('todo-eta-input');

@@ -248,13 +248,22 @@ The tool returns the tasks already categorized and pre-formatted into an object.
       try {
         const currentContext = `\n\n[SYSTEM CONTEXT]\nCurrent Date & Time: ${new Date().toString()}`;
         const systemPrompt = GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + currentContext;
-        const createOptions = { systemPrompt, temperature: 0.7, topK: 3 };
+        const createOptions = { 
+          systemPrompt, 
+          temperature: 0.7, 
+          topK: 3,
+          expectedOutputLanguage: 'en'
+        };
         let sess;
         try { sess = await lm.create(createOptions); }
         catch (e) {
-          try { sess = await lm.create({ systemPrompt }); }
-          catch (e) { sess = await lm.create(); }
+          try { sess = await lm.create({ systemPrompt, expectedOutputLanguage: 'en' }); }
+          catch (e2) {
+            try { sess = await lm.create({ systemPrompt }); }
+            catch (e3) { sess = await lm.create(); }
+          }
         }
+        this._assistantSessionPromptCount = 0;
         return sess;
       } catch (err) {
         console.warn('[AdSniper AI] Assistant Session creation failed:', err);
@@ -266,6 +275,23 @@ The tool returns the tasks already categorized and pre-formatted into an object.
       return this.assistantSession;
     } finally {
       this._assistantInitPromise = null;
+    }
+  }
+
+  /**
+   * Destroys the active assistant session and resets prompt turns.
+   */
+  destroyAssistantSession() {
+    if (this.assistantSession) {
+      try {
+        if (typeof this.assistantSession.destroy === 'function') {
+          this.assistantSession.destroy();
+        }
+      } catch (e) {
+        console.warn('[AdSniper AI] Error destroying assistant session:', e);
+      }
+      this.assistantSession = null;
+      this._assistantSessionPromptCount = 0;
     }
   }
 
@@ -298,15 +324,19 @@ The tool returns the tasks already categorized and pre-formatted into an object.
     }
 
     // 2. New tab ads / On-click popunders / popup tabs
+    const isDisableNewTab = /(disable|turn\s*off|stop|deactivate)\s+(.*(on\s*click\s*)?new\s*tabs?|popup\s*tabs?|popunders?|new\s*windows?|opening\s*new)/i.test(lower) ||
+      (lower.includes('new tab') && (lower.includes('disable') || lower.includes('turn off') || lower.includes('stop') || lower.includes('deactivate')));
+
     if (
-      /(remove|block|stop|prevent|disable|kill|turn\s*off)\s+(.*(on\s*click\s*)?new\s*tabs?|popup\s*tabs?|popunders?|new\s*windows?|opening\s*new)/i.test(lower) ||
+      isDisableNewTab ||
+      /(remove|block|prevent|kill)\s+(.*(on\s*click\s*)?new\s*tabs?|popup\s*tabs?|popunders?|new\s*windows?|opening\s*new)/i.test(lower) ||
       /(on\s*click\s*)?new\s*tabs?\s*(ads?|blocker|popups?)/i.test(lower) ||
-      (lower.includes('new tab') && (lower.includes('block') || lower.includes('stop') || lower.includes('remove') || lower.includes('prevent') || lower.includes('click')))
+      (lower.includes('new tab') && (lower.includes('block') || lower.includes('prevent') || lower.includes('click')))
     ) {
       return {
         tool: 'tool_toggle_feature',
-        args: { feature: 'new_tab_block', state: true },
-        intentName: 'block_new_tab',
+        args: { feature: 'new_tab_block', state: !isDisableNewTab },
+        intentName: isDisableNewTab ? 'unblock_new_tab' : 'block_new_tab',
       };
     }
 
@@ -383,6 +413,125 @@ The tool returns the tasks already categorized and pre-formatted into an object.
         tool: 'tool_extract_floating_boxes',
         args: {},
         intentName: 'extract_floating_boxes',
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Detects explicit user intents for Personal Assistant actions (Todos, Scratchpad, Summarization).
+   * Runs before LLM generation to guarantee deterministic execution and avoid reliance on on-device 3B JSON formatting.
+   *
+   * @param {string} promptText
+   * @returns {{ tool: string, args: object, intentName: string } | null}
+   */
+  detectAssistantDirectIntent(promptText) {
+    if (!promptText) return null;
+    const trimmed = promptText.trim();
+    const lower = trimmed.toLowerCase();
+
+    // 1. Add Todo intent
+    // Matches:
+    // - "Add to my todo list: Buy milk"
+    // - "Add to todo list: Buy milk"
+    // - "Add to todo: Buy milk"
+    // - "Add todo: Buy milk"
+    // - "Add task: Buy milk"
+    // - "New task: Buy milk"
+    // - "Todo: Buy milk"
+    // - "Add Buy milk to my todo list"
+    const todoPrefixMatch = trimmed.match(/^(?:add\s+to\s+(?:my\s+)?todo(?:\s+list)?|add\s+(?:a\s+)?(?:new\s+)?(?:todo|task)|new\s+task|todo)\s*[:\-–—]?\s*(.*)$/i);
+    if (todoPrefixMatch && todoPrefixMatch[1] && todoPrefixMatch[1].trim()) {
+      let rawTask = todoPrefixMatch[1].trim();
+      let eta = null;
+      let description = '';
+
+      // Check for inline ETA: e.g. "due 2026-10-25" or "due tomorrow" or "by tomorrow"
+      const etaMatch = rawTask.match(/\s+(?:due|by|eta)\s*[:\-–—]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|today|tomorrow)\b/i);
+      if (etaMatch) {
+        const etaKeyword = etaMatch[1].toLowerCase();
+        if (etaKeyword === 'today') {
+          eta = new Date().toISOString().split('T')[0];
+        } else if (etaKeyword === 'tomorrow') {
+          const d = new Date();
+          d.setDate(d.getDate() + 1);
+          eta = d.toISOString().split('T')[0];
+        } else {
+          eta = etaMatch[1];
+        }
+        rawTask = rawTask.replace(etaMatch[0], '').trim();
+      }
+
+      return {
+        tool: 'tool_add_todo',
+        args: { task: rawTask, description, eta },
+        intentName: 'add_todo'
+      };
+    }
+
+    const todoSuffixMatch = trimmed.match(/^add\s+(.+?)\s+to\s+(?:my\s+)?(?:todo\s+list|todo|tasks?)$/i);
+    if (todoSuffixMatch && todoSuffixMatch[1] && todoSuffixMatch[1].trim()) {
+      return {
+        tool: 'tool_add_todo',
+        args: { task: todoSuffixMatch[1].trim(), description: '', eta: null },
+        intentName: 'add_todo'
+      };
+    }
+
+    // 2. Scratchpad intent
+    // Matches:
+    // - "Save this note: meeting at 3pm"
+    // - "Save note: meeting at 3pm"
+    // - "Add note: meeting at 3pm"
+    // - "Note: meeting at 3pm"
+    // - "Add to scratchpad: meeting at 3pm"
+    // - "Save to scratchpad: meeting at 3pm"
+    const notePrefixMatch = trimmed.match(/^(?:save\s+(?:this\s+)?note|save\s+(?:to\s+)?(?:scratchpad|notes)|add\s+(?:to\s+)?(?:scratchpad|notes)|add\s+note|note)\s*[:\-–—]?\s*(.*)$/i);
+    if (notePrefixMatch && notePrefixMatch[1] && notePrefixMatch[1].trim()) {
+      return {
+        tool: 'tool_add_scratchpad',
+        args: { content: notePrefixMatch[1].trim(), append: true },
+        intentName: 'add_scratchpad'
+      };
+    }
+
+    // 3. Summarize Day / List Todos intent
+    // Matches:
+    // - "Summarize my day"
+    // - "Summarize day"
+    // - "Day summary"
+    // - "What are my tasks"
+    // - "What are my todos"
+    // - "List my todos"
+    // - "Show my todos"
+    // - "My tasks for today"
+    if (
+      /^(?:summarize\s+(?:my\s+)?day|day\s+summary|what\s+are\s+my\s+(?:tasks|todos)|list\s+(?:my\s+)?todos?|show\s+(?:my\s+)?todos?|my\s+tasks(?:\s+for\s+today)?)$/i.test(lower) ||
+      lower === 'summarize my day' ||
+      lower === 'day summary'
+    ) {
+      return {
+        tool: 'tool_get_todos',
+        args: {},
+        intentName: 'get_todos'
+      };
+    }
+
+    // 4. Summarize Page intent
+    // Matches:
+    // - "Please extract the clean readable content from this page and summarise it for me."
+    // - "Summarise page" / "Summarize page"
+    // - "Summarise this page" / "Summarize this page"
+    // - "Summarise article" / "Summarize article"
+    if (
+      /^(?:please\s+)?extract\s+(?:the\s+)?clean\s+readable\s+content.*(?:summarise|summarize)/i.test(lower) ||
+      /^(?:summarise|summarize)\s+(?:this\s+)?(?:page|article)$/i.test(lower)
+    ) {
+      return {
+        tool: 'tool_extract_clean_content',
+        args: {},
+        intentName: 'summarize_page'
       };
     }
 
@@ -699,30 +848,172 @@ The tool returns the tasks already categorized and pre-formatted into an object.
    */
 
   /**
+   * Synthesizes extracted text content into a clear, concise summary using a fresh language model session.
+   *
+   * @param {object} actionResult
+   * @param {string} promptText
+   * @param {function} onToken
+   * @returns {Promise<{ reply: string, actionExecuted: object }>}
+   */
+  async _synthesizeSummary(actionResult, promptText, onToken = null) {
+    try {
+      const extractedData = actionResult.text ? actionResult.text : actionResult.report;
+      // Aggressively truncate to stay within Gemini Nano's small context window (~4096 tokens).
+      const maxExtractChars = 8000;
+      const truncatedData = extractedData.length > maxExtractChars
+        ? extractedData.slice(0, maxExtractChars) + '\n\n[...content truncated for summarization...]'
+        : extractedData;
+
+      // Create a FRESH session for synthesis to avoid accumulated context from the first pass
+      const lm = this.getLanguageModelAPI();
+      let synthSession = null;
+      if (lm) {
+        try {
+          synthSession = await lm.create({
+            systemPrompt: 'You are a concise summarizer. Given extracted page content, provide a clear summary. Be brief and informative.',
+            temperature: 0.3,
+            topK: 3,
+            expectedOutputLanguage: 'en',
+          });
+        } catch (createErr) {
+          try {
+            synthSession = await lm.create();
+          } catch (e) {
+            synthSession = null;
+          }
+        }
+      }
+
+      if (!synthSession) {
+        // Cannot create synthesis session — show raw extracted text as fallback
+        const fallbackReply = `### 📄 Extracted Content\n\n${truncatedData.slice(0, 3000)}`;
+        if (onToken) onToken(fallbackReply);
+        return { reply: fallbackReply, actionExecuted: actionResult };
+      }
+
+      const summaryPrompt = `[Extracted page content]:\n"""\n${truncatedData}\n"""\n\nUser request: ${promptText}\n\nProvide a clear, concise summary of the above content:`;
+      let summaryResponse = '';
+      try {
+        if (typeof synthSession.promptStreaming === 'function' && onToken) {
+          const stream2 = synthSession.promptStreaming(summaryPrompt);
+          let chunkCounter2 = 0;
+          for await (const rawChunk of stream2) {
+            const chunk = typeof rawChunk === 'string' ? rawChunk : (rawChunk && rawChunk.text ? rawChunk.text : String(rawChunk || ''));
+            if (!chunk) continue;
+            if (summaryResponse && chunk.startsWith(summaryResponse)) {
+              summaryResponse = chunk;
+            } else if (summaryResponse && chunk === summaryResponse) {
+              continue;
+            } else {
+              summaryResponse += chunk;
+            }
+            
+            chunkCounter2++;
+            if (chunkCounter2 % 10 === 0 || summaryResponse.includes('```action')) {
+              const displaySnippet = this.cleanActionFromReply(summaryResponse);
+              if (displaySnippet) {
+                onToken(`### 📄 Page Summary\n\n${displaySnippet}`);
+              }
+            } else if (!summaryResponse.includes('```')) {
+              onToken(`### 📄 Page Summary\n\n${summaryResponse}`);
+            }
+          }
+        } else {
+          const rawRes = await synthSession.prompt(summaryPrompt);
+          summaryResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
+        }
+      } finally {
+        try { synthSession.destroy(); } catch (e) {}
+      }
+      
+      const cleanedReply = `### 📄 Page Summary\n\n${this.cleanActionFromReply(summaryResponse)}`;
+      this._assistantSessionPromptCount = (this._assistantSessionPromptCount || 0) + 1;
+      return { reply: cleanedReply, actionExecuted: actionResult };
+    } catch (err) {
+      console.warn('[AdSniper AI] Synthesis failed:', err);
+      const extractedData = actionResult.text || actionResult.report || '';
+      const fallbackReply = `### 📄 Extracted Content\n\n${extractedData.slice(0, 3000)}`;
+      if (onToken) onToken(fallbackReply);
+      return { reply: fallbackReply, actionExecuted: actionResult };
+    }
+  }
+
+  /**
    * Processes a prompt for the Personal Assistant chat.
    * Tracks token usage and processing speed.
    */
-  async processAssistantPrompt(promptText, history, context, onToken = null, onStats = null) {
+  async processAssistantPrompt(promptText, history = [], context = {}, onToken = null, onStats = null) {
     const trimmed = promptText.trim();
     if (!trimmed) return { reply: 'Please enter a request.' };
+
+    // ── Check Assistant Direct Intent First (Deterministic Execution) ──
+    const directIntent = this.detectAssistantDirectIntent(trimmed);
+    if (directIntent) {
+      if (directIntent.tool === 'tool_add_todo') {
+        const actionResult = await this.executeMcpAction(directIntent.tool, directIntent.args, context);
+        let reply = `✅ **Added to Todo list!**\n\n📌 **Task:** ${directIntent.args.task}`;
+        if (directIntent.args.eta) reply += `\n📅 **Due:** ${directIntent.args.eta}`;
+        if (directIntent.args.description) reply += `\n📝 **Description:** ${directIntent.args.description}`;
+        reply += `\n\n*View and manage your tasks in the **Lists** tab.*`;
+        if (onToken) onToken(reply);
+        return { reply, actionExecuted: actionResult };
+      }
+
+      if (directIntent.tool === 'tool_add_scratchpad') {
+        const actionResult = await this.executeMcpAction(directIntent.tool, directIntent.args, context);
+        const reply = `📝 **Saved to Scratchpad!**\n\n> ${directIntent.args.content.replace(/\n/g, '\n> ')}\n\n*View your notes in the **Lists** tab.*`;
+        if (onToken) onToken(reply);
+        return { reply, actionExecuted: actionResult };
+      }
+
+      if (directIntent.tool === 'tool_get_todos') {
+        const actionResult = await this.executeMcpAction(directIntent.tool, directIntent.args, context);
+        const reply = actionResult.report || 'No tasks found in your Todo list.';
+        if (onToken) onToken(reply);
+        return { reply, actionExecuted: actionResult };
+      }
+
+      if (directIntent.tool === 'tool_extract_clean_content') {
+        const actionResult = await this.executeMcpAction(directIntent.tool, directIntent.args, context);
+        if (actionResult.success && actionResult.text) {
+          if (onToken) {
+            onToken(`✅ **Page Content Extracted** (${actionResult.wordCount} words)\n\n*Synthesizing summary...*`);
+          }
+          return await this._synthesizeSummary(actionResult, promptText, onToken);
+        } else {
+          const reply = actionResult.error || 'Could not extract readable content from this page.';
+          if (onToken) onToken(reply);
+          return { reply, actionExecuted: actionResult };
+        }
+      }
+    }
 
     const session = await this.getAssistantSession();
     if (!session) {
       return { reply: 'Personal Assistant requires Gemini Nano (Prompt API) to be available.' };
     }
 
-    let fullPrompt = GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + '\n\n';
-    
-    if (context && context.activeTabUrl) {
-      fullPrompt += `[Current Tab URL: ${context.activeTabUrl}]\n\n`;
-    }
+    let fullPrompt = '';
+    const isNewSession = !this._assistantSessionPromptCount || this._assistantSessionPromptCount === 0;
 
-    if (history && history.length > 0) {
-      fullPrompt += `[Conversation History]\n`;
-      for (const msg of history) {
-        fullPrompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
+    if (isNewSession) {
+      fullPrompt += GeminiNanoClient.ASSISTANT_SYSTEM_PROMPT + '\n\n';
+      
+      if (context && context.activeTabUrl) {
+        fullPrompt += `[Current Tab URL: ${context.activeTabUrl}]\n\n`;
       }
-      fullPrompt += `\n`;
+
+      if (history && history.length > 0) {
+        fullPrompt += `[Conversation History]\n`;
+        for (const msg of history) {
+          fullPrompt += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
+        }
+        fullPrompt += `\n`;
+      }
+    } else {
+      if (context && context.activeTabUrl) {
+        fullPrompt += `[Current Tab URL: ${context.activeTabUrl}]\n`;
+      }
     }
 
     fullPrompt += `User: ${trimmed}\nAssistant: `;
@@ -774,7 +1065,7 @@ The tool returns the tasks already categorized and pre-formatted into an object.
       let outTokenCount = 0;
       try {
         if (typeof session.countPromptTokens === 'function') {
-          outTokenCount = Math.ceil(fullResponse.length / 4); // O3: character-based estimate instead of async call
+          outTokenCount = Math.ceil(fullResponse.length / 4);
         } else {
           outTokenCount = Math.ceil(fullResponse.length / 4);
         }
@@ -798,9 +1089,7 @@ The tool returns the tasks already categorized and pre-formatted into an object.
         actionResult = await this.executeMcpAction(parsedAction.tool, parsedAction.args || {}, context);
       }
 
-      let cleanedReply = this.cleanActionFromReply(fullResponse);
-      
-      // If the tool extracted text or raw JSON data, we need a second pass to synthesize it into a human-readable answer
+      // If the tool extracted text or raw JSON data, synthesize it into a clean human summary
       const needsSynthesis = actionResult && actionResult.success && (
         (actionResult.tool === 'tool_extract_clean_content' && actionResult.text) ||
         (actionResult.tool === 'tool_execute_js_script' && actionResult.report)
@@ -808,108 +1097,38 @@ The tool returns the tasks already categorized and pre-formatted into an object.
 
       if (needsSynthesis) {
         if (onToken) {
-          if (actionResult.tool === 'tool_get_todos') {
-            onToken(`*Synthesizing answer...*`);
-          } else {
-            onToken(`✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n*Synthesizing answer...*`);
-          }
+          onToken(`✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n*Synthesizing answer...*`);
         }
-        
-        try {
-          const extractedData = actionResult.text ? actionResult.text : actionResult.report;
-          // Aggressively truncate to stay within Gemini Nano's small context window (~4096 tokens).
-          // System prompt (~200 tokens) + user query (~50 tokens) + extracted data + output budget.
-          // Reserve ~1500 tokens for output, so cap input data at ~2000 tokens (~8000 chars).
-          const maxExtractChars = 8000;
-          const truncatedData = extractedData.length > maxExtractChars
-            ? extractedData.slice(0, maxExtractChars) + '\n\n[...content truncated for summarization...]'
-            : extractedData;
+        return await this._synthesizeSummary(actionResult, promptText, onToken);
+      }
 
-          // Create a FRESH session for synthesis to avoid accumulated context from the first pass
-          const lm = this.getLanguageModelAPI();
-          let synthSession = null;
-          if (lm) {
-            try {
-              synthSession = await lm.create({
-                systemPrompt: 'You are a concise summarizer. Given extracted page content, provide a clear summary. Be brief and informative.',
-                temperature: 0.3,
-                topK: 3,
-              });
-            } catch (createErr) {
-              try {
-                synthSession = await lm.create();
-              } catch (e) {
-                synthSession = null;
-              }
-            }
+      // Fallback intent check if model responded in prose without calling tool
+      if (!actionResult) {
+        const fallbackIntent = this.detectAssistantDirectIntent(trimmed);
+        if (fallbackIntent) {
+          if (fallbackIntent.tool === 'tool_add_todo') {
+            actionResult = await this.executeMcpAction(fallbackIntent.tool, fallbackIntent.args, context);
+            return {
+              reply: `✅ **Added to Todo list!**\n\n📌 **Task:** ${fallbackIntent.args.task}\n\n*View your tasks in the **Lists** tab.*`,
+              actionExecuted: actionResult
+            };
+          } else if (fallbackIntent.tool === 'tool_add_scratchpad') {
+            actionResult = await this.executeMcpAction(fallbackIntent.tool, fallbackIntent.args, context);
+            return {
+              reply: `📝 **Saved to Scratchpad!**\n\n> ${fallbackIntent.args.content.replace(/\n/g, '\n> ')}\n\n*View your notes in the **Lists** tab.*`,
+              actionExecuted: actionResult
+            };
+          } else if (fallbackIntent.tool === 'tool_get_todos') {
+            actionResult = await this.executeMcpAction(fallbackIntent.tool, fallbackIntent.args, context);
+            return {
+              reply: actionResult.report || 'No tasks found in your Todo list.',
+              actionExecuted: actionResult
+            };
           }
-
-          if (!synthSession) {
-            // Cannot create synthesis session — show raw extracted text as fallback
-            const fallbackReply = `✅ **Action Executed:** ${actionResult.message}\n\n${truncatedData}`;
-            if (onToken) onToken(fallbackReply);
-            return { reply: fallbackReply, actionExecuted: actionResult };
-          }
-
-          let summaryPrompt = `[Extracted page content]:\n"""\n${truncatedData}\n"""\n\nUser request: ${promptText}\n\nProvide a clear, concise summary of the above content:`;
-          let summaryResponse = '';
-          try {
-            if (typeof synthSession.promptStreaming === 'function' && onToken) {
-              const stream2 = synthSession.promptStreaming(summaryPrompt);
-              let chunkCounter2 = 0;
-              for await (const rawChunk of stream2) {
-                const chunk = typeof rawChunk === 'string' ? rawChunk : (rawChunk && rawChunk.text ? rawChunk.text : String(rawChunk || ''));
-                if (!chunk) continue;
-                if (summaryResponse && chunk.startsWith(summaryResponse)) {
-                  summaryResponse = chunk;
-                } else if (summaryResponse && chunk === summaryResponse) {
-                  continue;
-                } else {
-                  summaryResponse += chunk;
-                }
-                
-                chunkCounter2++;
-                if (chunkCounter2 % 10 === 0 || summaryResponse.includes('```action')) {
-                  const displaySnippet = this.cleanActionFromReply(summaryResponse);
-                  if (displaySnippet) {
-                    if (actionResult.tool === 'tool_get_todos') {
-                      onToken(displaySnippet);
-                    } else {
-                      onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${displaySnippet}`);
-                    }
-                  }
-                } else if (!summaryResponse.includes('```')) {
-                  if (actionResult.tool === 'tool_get_todos') {
-                    onToken(summaryResponse);
-                  } else {
-                    onToken(`✅ **Action Executed:** ${actionResult.message}\n\n${summaryResponse}`);
-                  }
-                }
-              }
-            } else {
-              const rawRes = await synthSession.prompt(summaryPrompt);
-              summaryResponse = typeof rawRes === 'string' ? rawRes : (rawRes.text || '');
-            }
-          } finally {
-            // Always destroy the temporary synthesis session to free memory
-            try { synthSession.destroy(); } catch (e) {}
-          }
-          
-          if (actionResult.tool === 'tool_get_todos') {
-            cleanedReply = this.cleanActionFromReply(summaryResponse);
-          } else {
-            cleanedReply = `✅ **Action Executed:** ${actionResult.message || 'Data retrieved'}\n\n${this.cleanActionFromReply(summaryResponse)}`;
-          }
-          return { reply: cleanedReply, actionExecuted: actionResult };
-        } catch (err) {
-          console.warn('[AdSniper AI] Second pass summarization failed:', err);
-          // Fallback: show the raw extracted content instead of nothing
-          const extractedData = actionResult.text || actionResult.report || '';
-          const fallbackReply = `✅ **Content Extracted** (summary unavailable):\n\n${extractedData.slice(0, 4000)}`;
-          if (onToken) onToken(fallbackReply);
-          cleanedReply = fallbackReply;
         }
       }
+
+      let cleanedReply = this.cleanActionFromReply(fullResponse);
 
       if (actionResult && actionResult.success) {
         if (!cleanedReply) {
@@ -918,10 +1137,10 @@ The tool returns the tasks already categorized and pre-formatted into an object.
           } else {
             cleanedReply = `✅ **Action Executed:** ${actionResult.message || actionResult.report || ''}`;
           }
+        } else if (actionResult.tool === 'tool_get_todos') {
+          cleanedReply = `${cleanedReply.trim()}\n\n${actionResult.report || ''}`;
         } else if (!cleanedReply.toLowerCase().includes('executed') && !cleanedReply.toLowerCase().includes('removed') && !cleanedReply.toLowerCase().includes('activated') && !cleanedReply.toLowerCase().includes('cleared')) {
-          if (actionResult.tool !== 'tool_get_todos') {
-            cleanedReply = `✅ **Action Executed:** ${actionResult.message}\n\n${cleanedReply}`;
-          }
+          cleanedReply = `✅ **Action Executed:** ${actionResult.message}\n\n${cleanedReply}`;
         }
       } else if (actionResult && !actionResult.success) {
         if (!cleanedReply) {
@@ -931,12 +1150,14 @@ The tool returns the tasks already categorized and pre-formatted into an object.
 
       // If cleanActionFromReply completely empties the response but we didn't execute an action:
       if (!cleanedReply && !actionResult) {
-        cleanedReply = fullResponse; // Fallback to raw response just in case
+        cleanedReply = fullResponse;
       }
 
+      this._assistantSessionPromptCount = (this._assistantSessionPromptCount || 0) + 1;
       return { reply: cleanedReply || 'Action completed.', actionExecuted: actionResult };
     } catch (err) {
       console.error('[AdSniper AI] Personal Assistant error:', err);
+      this.destroyAssistantSession();
       return { reply: `Error: ${err.message}` };
     }
   }
@@ -1336,33 +1557,55 @@ The tool returns the tasks already categorized and pre-formatted into an object.
         const { feature, state } = args;
 
         if (feature === 'new_tab_block') {
+          const targetState = (typeof state === 'boolean') ? state : (state === 'off' ? false : true);
           const toggleFn = (typeof toggleNewTabBlock === 'function') ? toggleNewTabBlock : (typeof window !== 'undefined' ? window.toggleNewTabBlock : null);
           if (toggleFn) {
-            await toggleFn();
+            await toggleFn(targetState);
           } else {
-            // Direct DNR rules creation for ad hosts (main_frame only)
-            const { adHosts = [] } = await chrome.storage.local.get('adHosts');
-            const rules = [];
-            let id = 40001;
-            for (const host of adHosts) {
-              if (!host || id >= 50000) break;
-              rules.push({
-                id: id++,
-                priority: 3,
-                action: { type: 'block' },
-                condition: { urlFilter: `||${host}`, resourceTypes: ['main_frame'] },
+            const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+            const existingNewTabIds = existingRules
+              .filter((r) => r.id >= 40001 && r.id < 50000)
+              .map((r) => r.id);
+
+            if (!targetState) {
+              if (existingNewTabIds.length > 0) {
+                await chrome.declarativeNetRequest.updateDynamicRules({
+                  addRules: [],
+                  removeRuleIds: existingNewTabIds,
+                });
+              }
+              await chrome.storage.local.set({ newTabBlockActive: false, newTabBlockRuleIds: [] });
+            } else {
+              // Direct DNR rules creation for ad hosts (main_frame only)
+              const { adHosts = [] } = await chrome.storage.local.get('adHosts');
+              const rules = [];
+              let id = 40001;
+              for (const host of adHosts) {
+                if (!host || id >= 50000) break;
+                rules.push({
+                  id: id++,
+                  priority: 3,
+                  action: { type: 'block' },
+                  condition: { urlFilter: `||${host}`, resourceTypes: ['main_frame'] },
+                });
+              }
+              await chrome.declarativeNetRequest.updateDynamicRules({
+                addRules: rules,
+                removeRuleIds: existingNewTabIds,
+              });
+              await chrome.storage.local.set({
+                newTabBlockActive: true,
+                newTabBlockRuleIds: rules.map((r) => r.id),
               });
             }
-            if (rules.length > 0) {
-              await chrome.declarativeNetRequest.updateDynamicRules({ addRules: rules, removeRuleIds: [] });
-              await chrome.storage.local.set({ newTabBlockActive: true, newTabBlockRuleIds: rules.map((r) => r.id) });
-            }
           }
+          const { newTabBlockActive = false } = await chrome.storage.local.get('newTabBlockActive');
           return {
             success: true,
             tool: toolName,
             feature,
-            message: 'Block New Tab Ads has been activated',
+            state: newTabBlockActive,
+            message: `Block New Tab Ads has been ${newTabBlockActive ? 'activated' : 'deactivated'}`,
           };
         }
 
@@ -1460,9 +1703,23 @@ The tool returns the tasks already categorized and pre-formatted into an object.
 
       case 'tool_add_scratchpad': {
         try {
-          window.dispatchEvent(new CustomEvent('AST_SCRATCHPAD_UPDATE', { 
-            detail: { content: args.content, append: args.append !== false } 
-          }));
+          let currentContent = '';
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            const stored = await chrome.storage.local.get(['astScratchpad']);
+            currentContent = stored.astScratchpad || '';
+            if (args.append !== false && currentContent) {
+              currentContent += '\n\n' + args.content;
+            } else {
+              currentContent = args.content;
+            }
+            await chrome.storage.local.set({ astScratchpad: currentContent });
+          }
+
+          if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            window.dispatchEvent(new CustomEvent('AST_SCRATCHPAD_UPDATE', { 
+              detail: { content: args.content, append: args.append !== false, fullContent: currentContent } 
+            }));
+          }
           return { success: true, tool: toolName, message: 'Saved to Scratchpad.' };
         } catch (e) {
           return { success: false, error: e.message };
@@ -1471,10 +1728,28 @@ The tool returns the tasks already categorized and pre-formatted into an object.
 
       case 'tool_add_todo': {
         try {
-          window.dispatchEvent(new CustomEvent('AST_TODO_ADD', { 
-            detail: { task: args.task, description: args.description || '', eta: args.eta || null } 
-          }));
-          return { success: true, tool: toolName, message: 'Added task to Todo list.' };
+          const newTodo = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            text: args.task,
+            done: false,
+            createdAt: new Date().toISOString(),
+            description: args.description || '',
+            eta: args.eta ? (typeof args.eta === 'string' ? args.eta.split('T')[0] : args.eta) : null
+          };
+
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+            const stored = await chrome.storage.local.get(['astTodos']);
+            const currentTodos = Array.isArray(stored.astTodos) ? stored.astTodos : [];
+            currentTodos.push(newTodo);
+            await chrome.storage.local.set({ astTodos: currentTodos });
+          }
+
+          if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            window.dispatchEvent(new CustomEvent('AST_TODO_ADD', { 
+              detail: newTodo 
+            }));
+          }
+          return { success: true, tool: toolName, message: `Added task "${args.task}" to Todo list.` };
         } catch (e) {
           return { success: false, error: e.message };
         }
@@ -1582,6 +1857,7 @@ The tool returns the tasks already categorized and pre-formatted into an object.
       }
       this.session = null;
     }
+    this.destroyAssistantSession();
   }
 }
 
