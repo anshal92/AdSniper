@@ -1576,6 +1576,48 @@
       animation: fireCorner 0.5s infinite alternate;
       border-color: #ef4444 !important;
     }
+    .todo-urgency-badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 3px;
+      white-space: nowrap;
+      margin-left: 6px;
+    }
+    .todo-urgency-overdue {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .todo-urgency-today {
+      background: rgba(234, 179, 8, 0.2);
+      color: #eab308;
+      border: 1px solid rgba(234, 179, 8, 0.4);
+    }
+    .todo-urgency-upcoming {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22c55e;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .todo-filter-btn {
+      padding: 2px 6px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 10px;
+      transition: all 0.15s ease;
+    }
+    .todo-filter-btn.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .todo-filter-btn:hover:not(.active) {
+      color: var(--text);
+      border-color: var(--muted);
+    }
 
     input[type="date"]::-webkit-calendar-picker-indicator {
       filter: invert(1);
@@ -1859,9 +1901,10 @@
       <span class="stat-label">Speed:</span>
       <span id="ast-speed">0 t/s</span>
     </div>
-    <div class="stat-item" title="Chat History Turns">
+    <div class="stat-item" title="Chat History Turns (Memory Depth)">
       <span class="stat-label">Context:</span>
       <span id="ast-context-turns">0 turns</span>
+      <input type="range" id="ast-context-slider" min="2" max="20" step="2" value="10" title="Adjust context depth (2-20 turns)" style="width: 45px; height: 14px; margin-left: 4px; vertical-align: middle; accent-color: var(--accent); cursor: pointer;">
     </div>
     <div class="stat-item" title="Time before chat is erased">
       <span class="stat-label">Chat Timer:</span>
@@ -1904,8 +1947,13 @@
   <div class="lists-container">
     <div id="lists-scratchpad-half" class="lists-half">
       <div class="lists-header">
-        <span>📝 Scratchpad</span>
-        <div style="display: flex; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span>📝 Scratchpad</span>
+          <span id="scratchpad-status" style="font-size: 10px; color: var(--muted); font-weight: normal;"></span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button id="scratchpad-convert-todos" class="lists-icon-btn" title="Convert notes to Todos via AI">🪄</button>
+          <button id="scratchpad-to-chat" class="lists-icon-btn" title="Send notes to Assistant chat">📥</button>
           <button id="scratchpad-expand" class="lists-icon-btn" title="Expand">⤢</button>
           <button id="scratchpad-clear" class="lists-icon-btn" title="Clear">🗑️</button>
         </div>
@@ -1915,7 +1963,13 @@
     <div id="lists-todo-half" class="lists-half">
       <div class="lists-header">
         <span>✅ Todo List</span>
-        <div style="display: flex; gap: 10px;">
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <div class="todo-filter-group" style="display: flex; gap: 3px; font-weight: normal;">
+            <button class="todo-filter-btn active" data-filter="all">All</button>
+            <button class="todo-filter-btn" data-filter="pending">Pending</button>
+            <button class="todo-filter-btn" data-filter="urgent">🔥 Urgent</button>
+            <button class="todo-filter-btn" data-filter="done">Done</button>
+          </div>
           <button id="todo-expand" class="lists-icon-btn" title="Expand">⤢</button>
           <button id="todo-clear" class="lists-icon-btn" title="Clear completed">🗑️</button>
         </div>

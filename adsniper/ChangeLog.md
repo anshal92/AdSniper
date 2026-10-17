@@ -4,6 +4,70 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ---
 
+## [2026-10-18] — Fix Block New Tab Ads Definition, Overblocking & Rule ID Collisions
+
+### Fixed
+- **Block New Tab Ads Overblocking Legitimate Websites (`popup.js`)**:
+  - **Root Cause**: `toggleNewTabBlock()` previously iterated through generic substring patterns from `adPatterns` (e.g. `"tracker"`, `"tracking"`, `"analytics"`, `"sponsored"`, `"/banner"`) alongside `adHosts` with `resourceTypes: ['main_frame']`. This inadvertently caused Chrome to block normal browsing to sites like `analytics.google.com`, FedEx/UPS tracking pages, or search queries containing tracker keywords.
+  - **Fix**: Aligned with the defined specification in `Architecture.md` and `ChangeLog.md` by restricting `main_frame` blocking strictly to known ad hosts (`adHosts`), omitting generic URL path patterns.
+- **"Rule with id 40001 does not have a unique ID" Crash on Toggle & Sniping Game (`popup.js`)**:
+  - **Root Cause**: When activating `Block New Tab Ads` or launching the Sniping Game, existing dynamic rules were removed only based on rule IDs found in `chrome.storage.local`. If storage was desynchronized from the browser DNR engine (e.g. after a crash or restart), calling `updateDynamicRules` with `addRules` starting at 40001 threw a duplicate rule ID error and failed.
+  - **Fix**: Both `toggleNewTabBlock()` and `handleSnipingGame()` now query the actual DNR engine directly via `chrome.declarativeNetRequest.getDynamicRules()`, filter all existing IDs in the `40001–49999` range, and atomically pass them into `removeRuleIds` alongside `addRules` in a single update call. Added auto-recovery in the catch block to wipe orphan rules if an error ever occurs.
+- **Dead & Misrouted Window Open Override Messaging (`popup.js`)**:
+  - Removed defunct `sendToTab({ type: 'INJECT_WINDOW_OPEN_OVERRIDE' })` and `RESTORE_WINDOW_OPEN_OVERRIDE` calls from `toggleNewTabBlock()`. These messages were sent to the tab's content script (which has no listener) rather than background, and the service worker's `noopOpen` override would break legitimate user navigation.
+- **AI Intent & Feature Toggle Synchronization (`nano-client.js`)**:
+  - Upgraded `detectDirectIntent` to distinguish disable/turn-off commands from enable commands, passing `state: false` when the user asks to turn off new tab blocking.
+  - Added support for explicit boolean state in `toggleNewTabBlock(explicitState)`.
+  - Updated `tool_toggle_feature` in `nano-client.js` to respect `args.state`, reliably setting target state and reporting accurate activation/deactivation messages.
+
+### Added
+- **Cross-Domain New Tab Ad Interceptor (`service-worker.js`)**:
+  - Implemented base domain extraction (`getBaseDomain`) and comparison (`isSameDomain`, `extractDomain`) supporting standard TLDs and multi-part ccTLDs (`.co.uk`, `.com.au`, `.co.in`, etc.).
+  - Added new-tab cross-domain interception via `chrome.tabs.onCreated` and `chrome.tabs.onUpdated`: when `newTabBlockActive` is enabled (or during gaming mode), any new tab opened by an opener page whose destination domain does not match the opener tab's base domain is automatically closed/blocked.
+  - Asynchronous navigation tracking: handles tabs created with `about:blank` or pending URLs via in-memory `pendingOpenerTabs` map with self-pruning TTL (30s) and cleanup on `chrome.tabs.onRemoved`.
+  - System page protection: exempts browser internal schemes (`chrome://`, `chrome-extension://`, `edge://`, `brave://`, `about:blank`, new tab pages) from accidental closure.
+
+---
+
+## [2026-10-17] — Gemini 3.8 Release: Personal Assistant & Lists Architecture Overhaul
+
+### Fixed
+- **Inline Page Summarisation (`popup.js`, `nano-client.js`)**:
+  - Eliminated unwanted external browser tab creation (`chrome.tabs.create({ url: blobUrl })`) when summarising a page.
+  - Page summaries now render and stream directly inline within the Personal Assistant chat interface (`#ast-chat-history`).
+- **Todo List & Scratchpad Functionality (`nano-client.js`, `popup.js`)**:
+  - Implemented `detectAssistantDirectIntent` in `nano-client.js` for deterministic pre-dispatch of assistant commands (`add_todo`, `add_scratchpad`, `get_todos`, `summarize_page`), eliminating reliance on on-device 3B model JSON generation.
+  - Upgraded `executeMcpAction` to persist directly and authoritatively to `chrome.storage.local` for `tool_add_todo` and `tool_add_scratchpad` instead of relying exclusively on in-memory DOM CustomEvents.
+  - Removed flawed 300ms debounce on Scratchpad; notes now persist immediately on each `input` event, eliminating note loss caused by instant popup process termination on blur.
+  - Fixed Todo item accordion event bubbling: stopped `click` propagation on checkboxes and throughout `.todo-details`, attached expand/collapse strictly to `contentRow`, and made description edits persist immediately on `input`.
+  - Added `chrome.storage.onChanged` listener and tab-switch synchronization (`refreshListsPanel()`) so the Lists tab stays in sync with AI actions in real time.
+- **Chat History Restoration & Premature Erasure (`popup.js`)**:
+  - Removed broken duplicate history restoration in `DOMContentLoaded` that targeted non-existent element `#ast-chat` with mismatched CSS classes.
+  - Fixed timestamp staleness in `handleAstSend()` by persisting `astLastUpdate: Date.now()` and `astLastUrl` alongside `astHistory`, preventing chats from prematurely expiring across popup sessions.
+  - Added copy button rendering for restored assistant messages (`role === 'assistant'`).
+- **MCP Action Contract Desynchronization & Task Loss (`nano-client.js`)**:
+  - Fixed issue in `processAssistantPrompt()` where `tool_get_todos` output was dropped if the model returned an introductory greeting or preamble. Now concatenates preamble text with the structured todo report.
+  - Cleaned dead `tool_get_todos` branch inside the second-pass synthesis pipeline.
+
+### Added
+- **Interactive Context Depth Telemetry (`popup.html`, `popup.js`)**:
+  - Replaced static turn text with real-time `Math.floor(astHistory.length / 2)` turn telemetry.
+  - Added an interactive context slider (`#ast-context-slider`, 2–20 turns) to configure dialogue memory depth on the fly.
+- **Smart Lists & Assistant Bi-Directional Bridge (`popup.html`, `popup.js`)**:
+  - Added `🪄 Convert to Tasks` button in Scratchpad header to automatically parse notes into Todo items.
+  - Added `📥 Send to Chat` button to forward Scratchpad notes directly into the Personal Assistant input prompt.
+  - Added Todo filter pills (`All`, `Pending`, `🔥 Urgent`, `Done`) in the Todo List header.
+  - Replaced blurry `scaleY` CSS distortion on overdue tasks with modern pulsating urgency badges and color-coded accent borders.
+  - Added timezone-safe local date parsing and card expansion state preservation during edits.
+
+### Optimized
+- **Gemini Nano Session Turn Tracking & Error Recovery (`nano-client.js`)**:
+  - Eliminated quadratic $O(N^2)$ prompt token bloat on stateful session turns by only seeding conversation history on fresh session starts (`_assistantSessionPromptCount === 0`).
+  - Added `expectedOutputLanguage: 'en'` across all assistant session creation tiers to suppress Chrome engine warnings and optimize tokenization.
+  - Implemented automated session self-healing via `destroyAssistantSession()` on prompt errors to prevent permanent zombie session locks.
+
+---
+
 ## [2026-10-03] — Personal Assistant Deep Audit & Bug Fixes
 
 ### Fixed

@@ -104,6 +104,7 @@ try {
 // 2. Cleanup — remove log when tab is closed
 // ---------------------------------------------------------------------------
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  pendingOpenerTabs.delete(tabId);
   const key = `requests_${tabId}`;
   pendingRequests.delete(key);
   await chrome.storage.local.remove(key);
@@ -114,31 +115,221 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 });
 
 // ---------------------------------------------------------------------------
-// 2b. Block ads from opening new tabs while gaming
+// 2b. Block new tab ads (cross-domain new tabs & gaming popup protection)
 // ---------------------------------------------------------------------------
-chrome.tabs.onCreated.addListener(async (newTab) => {
-  if (!newTab.openerTabId) return;
+// Map of newly created tab IDs awaiting their initial committed navigation:
+// tabId -> { openerTabId, openerDomain, openerUrl, isGameTab, createdAt }
+const pendingOpenerTabs = new Map();
 
-  const targetUrl = (newTab.url || newTab.pendingUrl || '').toLowerCase();
+/**
+ * Extracts base registrable domain from hostname (e.g. 'sub.example.com' -> 'example.com',
+ * 'sport.bbc.co.uk' -> 'bbc.co.uk').
+ */
+function getBaseDomain(hostname) {
+  if (!hostname) return '';
+  hostname = hostname.toLowerCase().trim();
+  if (hostname.startsWith('[') && hostname.endsWith(']')) return hostname;
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) return hostname;
 
-  // NEVER close Chrome system pages, new-tab pages, empty tabs, or extension pages
+  const parts = hostname.split('.');
+  if (parts.length <= 2) return hostname;
+
+  // Multi-part second-level ccTLDs (e.g. .co.uk, .com.au, .co.in, .org.uk, .com.br, etc.)
+  if (/\.(co|com|net|org|edu|gov|ac|mil|gen|ne|nom)\.[a-z]{2}$/i.test(hostname)) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.slice(-2).join('.');
+}
+
+/**
+ * Parses and returns base domain for valid http/https URLs. Returns null for non-http
+ * protocols, system URLs (about:blank, chrome://, chrome-extension://), or empty URLs.
+ */
+function extractDomain(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return null;
+  const trimmed = urlStr.trim();
   if (
-    !targetUrl ||
-    targetUrl === 'about:blank' ||
-    targetUrl.startsWith('chrome://') ||
-    targetUrl.startsWith('chrome-extension://') ||
-    targetUrl.startsWith('edge://') ||
-    targetUrl.startsWith('brave://') ||
-    targetUrl.includes('newtab')
+    !trimmed ||
+    trimmed === 'about:blank' ||
+    trimmed.startsWith('chrome://') ||
+    trimmed.startsWith('chrome-extension://') ||
+    trimmed.startsWith('edge://') ||
+    trimmed.startsWith('brave://') ||
+    trimmed.startsWith('devtools://') ||
+    trimmed.startsWith('view-source:') ||
+    trimmed.startsWith('javascript:') ||
+    trimmed.startsWith('data:') ||
+    trimmed.includes('newtab')
   ) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return getBaseDomain(parsed.hostname);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns true if both URLs share the same base domain.
+ */
+function isSameDomain(url1, url2) {
+  const d1 = extractDomain(url1);
+  const d2 = extractDomain(url2);
+  if (!d1 || !d2) return false;
+  return d1 === d2;
+}
+
+/** Evicts pending opener tracking entries older than 30 seconds to prevent leaks */
+function prunePendingOpenerTabs() {
+  const now = Date.now();
+  for (const [tabId, item] of pendingOpenerTabs.entries()) {
+    if (now - item.createdAt > 30000) {
+      pendingOpenerTabs.delete(tabId);
+    }
+  }
+}
+
+chrome.tabs.onCreated.addListener(async (newTab) => {
+  if (!newTab || !newTab.id || !newTab.openerTabId) return;
+
+  prunePendingOpenerTabs();
+
+  const { newTabBlockActive = false, snipingActiveTabId } =
+    await chrome.storage.local.get(['newTabBlockActive', 'snipingActiveTabId']);
+
+  const isGameTab = Boolean(snipingActiveTabId && newTab.openerTabId === snipingActiveTabId);
+  const isBlockNewTabActive = Boolean(newTabBlockActive);
+
+  if (!isGameTab && !isBlockNewTabActive) {
     return;
   }
 
-  const { snipingActiveTabId } = await chrome.storage.local.get('snipingActiveTabId');
-  if (snipingActiveTabId && newTab.openerTabId === snipingActiveTabId) {
+  // Retrieve opener tab information to evaluate origin domain
+  let openerTab = null;
+  try {
+    openerTab = await chrome.tabs.get(newTab.openerTabId);
+  } catch {
+    // Opener tab may already be closed
+  }
+
+  // During gaming mode, close any popup tab spawned by the game tab (except system pages)
+  if (isGameTab) {
+    const rawTarget = (newTab.url || newTab.pendingUrl || '').toLowerCase();
+    const isSystemPage =
+      rawTarget.startsWith('chrome://') ||
+      rawTarget.startsWith('chrome-extension://') ||
+      rawTarget.startsWith('edge://') ||
+      rawTarget.startsWith('brave://') ||
+      rawTarget.includes('newtab');
+
+    if (!isSystemPage) {
+      if (rawTarget && rawTarget !== 'about:blank') {
+        try {
+          console.log('[AdSniper] Closed unwanted popup tab opened by game tab:', newTab.id, rawTarget);
+          await chrome.tabs.remove(newTab.id);
+        } catch { /* Tab may already be closed */ }
+        return;
+      } else {
+        // Destination URL not yet known; track for onUpdated
+        pendingOpenerTabs.set(newTab.id, {
+          openerTabId: newTab.openerTabId,
+          openerDomain: null,
+          openerUrl: null,
+          isGameTab: true,
+          createdAt: Date.now(),
+        });
+        return;
+      }
+    }
+  }
+
+  // For Block New Tab Ads: compare opener domain vs target domain
+  if (!openerTab) return;
+  const openerUrl = openerTab.url || openerTab.pendingUrl || '';
+  const openerDomain = extractDomain(openerUrl);
+
+  // If opener is not an http/https page (e.g. extension page, chrome://), never block
+  if (!openerDomain) return;
+
+  const targetUrl = newTab.url || newTab.pendingUrl || '';
+  const targetDomain = extractDomain(targetUrl);
+
+  if (targetDomain) {
+    // Target URL is already resolved
+    if (targetDomain !== openerDomain) {
+      try {
+        console.log(`[AdSniper] Blocked cross-domain new tab (${targetDomain} !== ${openerDomain}):`, newTab.id, targetUrl);
+        await chrome.tabs.remove(newTab.id);
+      } catch { /* Tab may already be closed */ }
+    }
+  } else {
+    // Target URL is pending or about:blank — track for onUpdated check
+    const rawTarget = targetUrl.toLowerCase();
+    const isSystemPage =
+      rawTarget.startsWith('chrome://') ||
+      rawTarget.startsWith('chrome-extension://') ||
+      rawTarget.startsWith('edge://') ||
+      rawTarget.startsWith('brave://') ||
+      rawTarget.includes('newtab');
+
+    if (!isSystemPage) {
+      pendingOpenerTabs.set(newTab.id, {
+        openerTabId: newTab.openerTabId,
+        openerDomain,
+        openerUrl,
+        isGameTab: false,
+        createdAt: Date.now(),
+      });
+    }
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (!changeInfo.url) return;
+  if (!pendingOpenerTabs.has(tabId)) return;
+
+  const pending = pendingOpenerTabs.get(tabId);
+  const targetUrl = changeInfo.url;
+  const rawTarget = targetUrl.toLowerCase();
+
+  // If still on about:blank, wait for destination
+  if (rawTarget === 'about:blank') return;
+  if (
+    rawTarget.startsWith('chrome://') ||
+    rawTarget.startsWith('chrome-extension://') ||
+    rawTarget.startsWith('edge://') ||
+    rawTarget.startsWith('brave://') ||
+    rawTarget.includes('newtab')
+  ) {
+    pendingOpenerTabs.delete(tabId);
+    return;
+  }
+
+  // If it was opened during gaming mode, close it once a real URL is loaded
+  if (pending.isGameTab) {
+    pendingOpenerTabs.delete(tabId);
     try {
-      console.log('[AdSniper] Closed unwanted popup tab opened by game tab:', newTab.id, targetUrl);
-      await chrome.tabs.remove(newTab.id);
+      console.log('[AdSniper] Closed unwanted popup tab opened by game tab on navigation:', tabId, targetUrl);
+      await chrome.tabs.remove(tabId);
+    } catch { /* Tab may already be closed */ }
+    return;
+  }
+
+  const targetDomain = extractDomain(targetUrl);
+  if (!targetDomain) return; // Non-http/https URL or still parsing
+
+  // Initial navigation resolved
+  pendingOpenerTabs.delete(tabId);
+
+  if (pending.openerDomain && targetDomain !== pending.openerDomain) {
+    try {
+      console.log(`[AdSniper] Blocked cross-domain new tab navigation (${targetDomain} !== ${pending.openerDomain}):`, tabId, targetUrl);
+      await chrome.tabs.remove(tabId);
     } catch { /* Tab may already be closed */ }
   }
 });
