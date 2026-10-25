@@ -43,6 +43,17 @@ const MASS_BLOCK_BASE_ID = 50001;
 // Rule IDs 40001–49999 are reserved for new-tab-block rules (main_frame only)
 const NEW_TAB_BLOCK_BASE_ID = 40001;
 
+const POPUP_MIN_WIDTH = 420;
+const POPUP_MAX_WIDTH = 800;
+const POPUP_MIN_HEIGHT = 400;
+const POPUP_MAX_HEIGHT = 600;
+
+const SIZE_PRESETS = {
+  S: { width: 480, height: 450 },
+  M: { width: 575, height: 550 },
+  L: { width: 780, height: 600 },
+};
+
 // ─────────────────────────────────────────────
 // sendToTab — robust message delivery
 // Injects content.js on-demand if the content script is not yet running
@@ -99,6 +110,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch { /* ignore */ }
 
+  await initResize();
+
   const openNewTabBtn = document.getElementById('open-newtab-btn');
   if (openNewTabBtn) {
     openNewTabBtn.addEventListener('click', () => {
@@ -131,6 +144,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     filterText = e.target.value.toLowerCase().trim();
     renderRequests(allRequests);
   });
+
+  // Wire export domains list button
+  const exportBtn = document.getElementById('export-domains-btn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const { savedBlockedDomains = [], adHosts = [] } = await chrome.storage.local.get([
+        'savedBlockedDomains',
+        'adHosts',
+      ]);
+      const listToExport = savedBlockedDomains.length > 0 ? savedBlockedDomains : adHosts;
+      if (listToExport.length === 0) {
+        alert('No domains in blocklist yet. Click "💾 Save" next to any request to add domains.');
+        return;
+      }
+      const header = `# AdSniper Saved Domain Blocklist\n# Total domains: ${listToExport.length}\n# Exported: ${new Date().toISOString()}\n\n`;
+      const blob = new Blob([header + listToExport.join('\n')], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `adsniper-blocked-domains-${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
 
   // Wire clear button
   document.getElementById('clear-btn').addEventListener('click', async (e) => {
@@ -361,8 +399,15 @@ function buildRequestRow(req) {
   blockBtn.textContent = 'Block';
   blockBtn.addEventListener('click', () => openBlockForm(row, req.url));
 
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-save-domain';
+  saveBtn.title = 'Save domain to persistent blocklist file & block it';
+  saveBtn.textContent = '💾 Save';
+  saveBtn.addEventListener('click', () => saveDomainToBlocklist(req.url, saveBtn));
+
   row.appendChild(badge);
   row.appendChild(urlEl);
+  row.appendChild(saveBtn);
   row.appendChild(blockBtn);
   return row;
 }
@@ -1578,6 +1623,196 @@ async function handleSnipingGame() {
     btn.disabled = false;
   }
 }
+
+// ─────────────────────────────────────────────
+// POPUP RESIZE CONTROLS
+// ─────────────────────────────────────────────
+async function initResize() {
+  const isFullTab = document.body.classList.contains('full-tab');
+  if (isFullTab) return;
+
+  const { popupWidth, popupHeight } = await chrome.storage.local.get(['popupWidth', 'popupHeight']);
+  if (popupWidth && popupHeight) {
+    applyPopupDimensions(popupWidth, popupHeight);
+  } else {
+    highlightPresetButton('M');
+  }
+
+  // Preset buttons
+  document.querySelectorAll('.btn-size-preset').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const presetKey = btn.dataset.size;
+      const preset = SIZE_PRESETS[presetKey];
+      if (preset) {
+        applyPopupDimensions(preset.width, preset.height);
+        await chrome.storage.local.set({ popupWidth: preset.width, popupHeight: preset.height });
+      }
+    });
+  });
+
+  // Drag handle
+  const handle = document.getElementById('resize-handle');
+  if (!handle) return;
+
+  let startX = 0;
+  let startY = 0;
+  let startW = 0;
+  let startH = 0;
+  let isResizing = false;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    isResizing = true;
+    handle.classList.add('resizing');
+    startX = e.clientX;
+    startY = e.clientY;
+    startW = document.body.offsetWidth;
+    startH = document.body.offsetHeight;
+
+    function onMouseMove(moveEvent) {
+      if (!isResizing) return;
+      const newW = Math.min(POPUP_MAX_WIDTH, Math.max(POPUP_MIN_WIDTH, startW + (moveEvent.clientX - startX)));
+      const newH = Math.min(POPUP_MAX_HEIGHT, Math.max(POPUP_MIN_HEIGHT, startH + (moveEvent.clientY - startY)));
+      applyPopupDimensions(newW, newH);
+    }
+
+    function onMouseUp() {
+      if (isResizing) {
+        isResizing = false;
+        handle.classList.remove('resizing');
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+        chrome.storage.local.set({
+          popupWidth: document.body.offsetWidth,
+          popupHeight: document.body.offsetHeight,
+        });
+      }
+    }
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+function applyPopupDimensions(w, h) {
+  document.body.style.width = `${w}px`;
+  document.body.style.height = `${h}px`;
+  document.documentElement.style.width = `${w}px`;
+  document.documentElement.style.height = `${h}px`;
+
+  // Update preset button active state
+  let matchedPreset = null;
+  for (const [key, val] of Object.entries(SIZE_PRESETS)) {
+    if (Math.abs(val.width - w) <= 15 && Math.abs(val.height - h) <= 15) {
+      matchedPreset = key;
+      break;
+    }
+  }
+  highlightPresetButton(matchedPreset);
+}
+
+function highlightPresetButton(key) {
+  document.querySelectorAll('.btn-size-preset').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.size === key);
+  });
+}
+
+// ─────────────────────────────────────────────
+// SAVE DOMAIN TO BLOCKLIST
+// ─────────────────────────────────────────────
+async function saveDomainToBlocklist(url, btn) {
+  let domain = null;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    domain = host.startsWith('www.') ? host.slice(4) : host;
+  } catch {
+    domain = null;
+  }
+
+  if (!domain) {
+    if (btn) {
+      btn.textContent = '⚠️ Invalid';
+      setTimeout(() => { btn.textContent = '💾 Save'; }, 1500);
+    }
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Saving…';
+  }
+
+  try {
+    const { savedBlockedDomains = [], adHosts: storedHosts = [] } = await chrome.storage.local.get([
+      'savedBlockedDomains',
+      'adHosts',
+    ]);
+
+    const updatedDomains = Array.from(new Set([...savedBlockedDomains, domain]));
+    const updatedHosts = Array.from(new Set([...storedHosts, domain]));
+
+    await chrome.storage.local.set({
+      savedBlockedDomains: updatedDomains,
+      adHosts: updatedHosts,
+    });
+
+    // Update in-memory adHosts
+    if (Array.isArray(adHosts) && !adHosts.includes(domain)) {
+      adHosts.push(domain);
+    }
+
+    // Add DNR rule to actively block this domain
+    const { nextRuleId = 1001 } = await chrome.storage.local.get('nextRuleId');
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      addRules: [
+        {
+          id: nextRuleId,
+          priority: 1,
+          action: { type: 'block' },
+          condition: { urlFilter: `||${domain}`, resourceTypes: RESOURCE_TYPES },
+        },
+      ],
+      removeRuleIds: [],
+    });
+    await chrome.storage.local.set({ nextRuleId: nextRuleId + 1 });
+
+    // Inform content script to immediately hide any element matching this domain
+    try {
+      await sendToTab({
+        type: 'APPLY_BLOCKED_PATTERNS',
+        hosts: [domain],
+        patterns: [],
+      });
+    } catch { /* Tab may not have content script */ }
+
+    await syncBadge();
+    await refreshAdBlocker();
+
+    if (btn) {
+      btn.textContent = '✓ Saved';
+      btn.classList.add('saved');
+      setTimeout(() => {
+        if (btn) {
+          btn.textContent = '💾 Save';
+          btn.classList.remove('saved');
+          btn.disabled = false;
+        }
+      }, 1500);
+    }
+  } catch (err) {
+    console.error('[AdSniper] Save domain failed:', err);
+    if (btn) {
+      btn.textContent = '❌ Error';
+      setTimeout(() => {
+        if (btn) {
+          btn.textContent = '💾 Save';
+          btn.disabled = false;
+        }
+      }, 1500);
+    }
+  }
+}
+
 // ==========================================
 // PERSONAL ASSISTANT
 // ==========================================

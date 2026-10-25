@@ -37,3 +37,10 @@ After making any code changes to the AdSniper extension, you MUST prepend a date
 - **Ad patterns**: fetched from pgl.yoyo.org on install; fallback: `data/ad-patterns.json`
 - **State**: all persistent state lives in `chrome.storage.local` (SW has no persistent memory)
 - **DNR rule IDs**: user rules 1001–39999, new-tab-block 40001–49999, mass-block 50001+
+- **Saved domain blocklist**: `savedBlockedDomains` array in storage merges into `adHosts` on startup and enables 1-click domain saving & export (.txt) from Requests view
+- **Popup resizing**: `popupWidth` / `popupHeight` in storage (420–800W, 400–600H) with S/M/L presets and drag handle
+- **Element Picker**: uses `findTargetContainer()` and `applyDelete()` (physical DOM detachment via `el.remove()`) with window capture listeners, floating indicator card, and keyboard navigation (↑/↓/Enter/Esc)
+- **Lists Tab hierarchy**: Todo List on top, Scratchpad notepad on bottom
+- **Key recent functions**:
+  - `saveDomainToBlocklist()`, `initResize()`, `applySize()` in `popup/popup.js`
+  - `findTargetContainer()`, `applyDelete()`, `showDeleteToast()` in `content/content.js`

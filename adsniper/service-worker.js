@@ -765,7 +765,16 @@ async function cleanupOrphanedData() {
   }
 }
 
-chrome.runtime.onStartup.addListener(() => cleanupOrphanedData());
+chrome.runtime.onStartup.addListener(async () => {
+  await cleanupOrphanedData();
+  const { savedBlockedDomains = [], adHosts = [] } = await chrome.storage.local.get(['savedBlockedDomains', 'adHosts']);
+  if (savedBlockedDomains.length > 0) {
+    const mergedHosts = Array.from(new Set([...adHosts, ...savedBlockedDomains]));
+    if (mergedHosts.length !== adHosts.length) {
+      await chrome.storage.local.set({ adHosts: mergedHosts });
+    }
+  }
+});
 
 chrome.runtime.onSuspend.addListener(() => {
   // Ensure we don't lose batched in-memory data when the ephemeral MV3 worker goes to sleep
@@ -833,8 +842,10 @@ async function fetchAndStoreAdPatterns() {
   try {
     const fallbackRes = await fetch(chrome.runtime.getURL('data/ad-patterns.json'));
     const data = await fallbackRes.json();
+    const { savedBlockedDomains = [] } = await chrome.storage.local.get('savedBlockedDomains');
+    const mergedHosts = Array.from(new Set([...(data.hosts || []), ...savedBlockedDomains]));
     await chrome.storage.local.set({
-      adHosts: data.hosts || [],
+      adHosts: mergedHosts,
       adPatterns: data.patterns || [],
       adPatternsUpdated: Date.now(),
     });
