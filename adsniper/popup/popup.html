@@ -558,7 +558,10 @@
     }
     .btn:hover { opacity: .8; }
 
-    .btn-block   { background: var(--red);    color: #fff; }
+    .btn-block       { background: var(--red);    color: #fff; }
+    .btn-save-domain { background: #4f46e5;       color: #fff; }
+    .btn-save-domain:hover { background: #4338ca; }
+    .btn-save-domain.saved { background: var(--green) !important; color: #fff; }
     .btn-confirm { background: var(--green);  color: #fff; }
     .btn-cancel  { background: var(--border); color: var(--text); }
     .btn-remove  {
@@ -1478,6 +1481,9 @@
       min-height: 0;
     }
     
+    .lists-half:last-child {
+      border-bottom: none;
+    }
     .lists-container.has-expanded-child .lists-half {
       display: none;
     }
@@ -1703,6 +1709,56 @@
     body.full-tab .ai-response-box { max-height: 500px; }
     body.full-tab .ast-chat-history { max-height: 600px; }
     body.full-tab .btn-open-newtab { display: none; }
+    body.full-tab .size-presets,
+    body.full-tab .resize-handle { display: none !important; }
+
+    /* Resize controls */
+    .size-presets {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1px 3px;
+      margin-left: auto;
+    }
+    .btn-size-preset {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+      line-height: 1.2;
+    }
+    .btn-size-preset:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .btn-size-preset.active {
+      color: var(--accent);
+      background: rgba(124, 106, 255, 0.2);
+    }
+    .resize-handle {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      width: 14px;
+      height: 14px;
+      cursor: nwse-resize;
+      z-index: 99999;
+      background: linear-gradient(135deg, transparent 45%, var(--muted) 45%, var(--muted) 55%, transparent 55%, transparent 70%, var(--muted) 70%, var(--muted) 80%, transparent 80%);
+      opacity: 0.5;
+      user-select: none;
+      transition: opacity 0.2s;
+    }
+    .resize-handle:hover, .resize-handle.resizing {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
@@ -1716,6 +1772,11 @@
       <input type="checkbox" id="sniping-newtab-toggle" />
       <span class="sniping-newtab-label">New Tab</span>
     </label>
+  </div>
+  <div class="size-presets" title="Resize Popup Window">
+    <button class="btn-size-preset" data-size="S" title="Compact (480×450)">S</button>
+    <button class="btn-size-preset active" data-size="M" title="Standard (575×550)">M</button>
+    <button class="btn-size-preset" data-size="L" title="Large (780×600)">L</button>
   </div>
   <button id="open-newtab-btn" class="btn-open-newtab" title="Open AdSniper in a new tab">↗</button>
   <div id="header-badge" class="header-badge"></div>
@@ -1872,6 +1933,7 @@
     <span>Requests</span>
     <span id="req-count" class="count-pill">0</span>
     <span class="section-hint">current tab · newest first</span>
+    <button id="export-domains-btn" class="btn-link" title="Download saved domain blocklist (.txt)">export list</button>
     <button id="clear-btn" class="btn-link">clear</button>
     <button class="collapse-btn" id="requests-collapse-btn">▾ Collapse</button>
   </div>
@@ -1945,21 +2007,6 @@
 <!-- PANEL: LISTS -->
 <div id="panel-lists" class="panel">
   <div class="lists-container">
-    <div id="lists-scratchpad-half" class="lists-half">
-      <div class="lists-header">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span>📝 Scratchpad</span>
-          <span id="scratchpad-status" style="font-size: 10px; color: var(--muted); font-weight: normal;"></span>
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <button id="scratchpad-convert-todos" class="lists-icon-btn" title="Convert notes to Todos via AI">🪄</button>
-          <button id="scratchpad-to-chat" class="lists-icon-btn" title="Send notes to Assistant chat">📥</button>
-          <button id="scratchpad-expand" class="lists-icon-btn" title="Expand">⤢</button>
-          <button id="scratchpad-clear" class="lists-icon-btn" title="Clear">🗑️</button>
-        </div>
-      </div>
-      <textarea id="scratchpad-input" class="scratchpad-textarea" placeholder="Type notes or have the AI save them here..."></textarea>
-    </div>
     <div id="lists-todo-half" class="lists-half">
       <div class="lists-header">
         <span>✅ Todo List</span>
@@ -1985,7 +2032,22 @@
         <input type="text" id="todo-desc-input" placeholder="Optional description..." style="flex: 1;">
         <button id="todo-add-btn">Add</button>
       </div>
+    </div><div id="lists-scratchpad-half" class="lists-half">
+      <div class="lists-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span>📝 Scratchpad</span>
+          <span id="scratchpad-status" style="font-size: 10px; color: var(--muted); font-weight: normal;"></span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button id="scratchpad-convert-todos" class="lists-icon-btn" title="Convert notes to Todos via AI">🪄</button>
+          <button id="scratchpad-to-chat" class="lists-icon-btn" title="Send notes to Assistant chat">📥</button>
+          <button id="scratchpad-expand" class="lists-icon-btn" title="Expand">⤢</button>
+          <button id="scratchpad-clear" class="lists-icon-btn" title="Clear">🗑️</button>
+        </div>
+      </div>
+      <textarea id="scratchpad-input" class="scratchpad-textarea" placeholder="Type notes or have the AI save them here..."></textarea>
     </div>
+    
   </div>
 </div>
 
@@ -2005,6 +2067,8 @@
 </div>
 
 <footer id="footer">Initializing…</footer>
+
+<div id="resize-handle" class="resize-handle" title="Drag to resize popup window"></div>
 
 <script src="../ai/nano-client.js"></script>
 <script src="popup.js"></script>

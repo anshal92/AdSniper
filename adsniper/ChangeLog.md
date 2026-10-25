@@ -4,6 +4,63 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ---
 
+## [2026-10-25] — Element Picker Delete Fix, Popup Resize Controls, Lists Tab Reorder & Save Domain Blocklist
+
+### Fixed
+- **Target Container Bounding Box & Element Picker Deletion (`content/content.js`)**:
+  - Replaced soft `applyHide` with `applyDelete` to physically remove targeted elements from the DOM instead of leaving them with `display: none`.
+  - Overhauled target container detection (`findTargetContainer`) to accurately detect full ad containers, banner slots, modals, and wrapper blocks with upward DOM traversal.
+  - Eliminated the fullscreen transparent overlay that caused dropped hit-tests, pointer-event capture bugs, and broken bounding boxes; replaced with zero-overhead capture listeners on `window` and global crosshair style injection.
+  - Added real-time visual indicator card on targeted elements showing tag name, ID, class, rendered dimensions (`W × H px`), and extracted domain name (`🌐 domain.com`).
+  - Added keyboard container stepping: press `↑` or `W` to expand bounding box to parent container, `↓` or `S` to narrow to leaf element, `Enter` to delete, and `Esc` to cancel.
+  - Added top-center screen indicator banner ("Element Deletion Mode") and post-deletion floating toast notification confirming the removed element.
+  - Added null guards and graceful fallback handling so clicking empty page regions exits cleanly without throwing errors.
+
+### Added
+- **Popup Window Resize System (`popup/popup.html`, `popup/popup.js`)**:
+  - Added size preset buttons (`S: 480×450`, `M: 575×550`, `L: 780×600`) in the header for 1-click resizing.
+  - Added interactive drag-resize corner handle in the bottom-right for freeform resizing between 420px–800px width and 400px–600px height.
+  - Persisted user-selected dimensions in `chrome.storage.local` across popup sessions.
+- **Save Domain Blocklist Button in Requests View (`popup/popup.html`, `popup/popup.js`, `service-worker.js`)**:
+  - Added `💾 Save` button alongside `Block` on every captured network request row.
+  - Automatically extracts and normalizes the target domain, appends to `savedBlockedDomains`, merges into `adHosts`, registers dynamic DNR block rules, and hides matching elements in real-time.
+  - Added `export list` button to the Requests header to download the complete domain blocklist as a `.txt` file.
+  - Ensured `savedBlockedDomains` are retained and merged on browser/extension startup and background fetches.
+
+### Changed
+- **Lists Tab Layout Hierarchy (`popup/popup.html`)**:
+  - Moved the **Todo List** to the top half and the **Scratchpad** to the bottom half for improved daily task visibility.
+
+---
+
+## [2026-10-20] — Sniping Game Engine Visual Beautification & AAA Polish
+
+### Added
+- **Dynamic Gradient Sky & Twinkling Stars (`content/sniper-game.js`)**:
+  - Replaced flat semi-transparent backdrop with animated gradient canvas sky shifting smoothly across deep navy, dusky purple, and atmospheric twilight tones.
+  - Added starfield system (`initStars`, `renderSky`) with 60 twinkling stars featuring randomized twinkle phase and radius.
+- **Volumetric Cloud System (`content/sniper-game.js`)**:
+  - Upgraded flat ellipse clouds into soft, multi-layered radial gradient cloud puffs (`renderClouds`).
+  - Added cloud drift simulation in both `PLAYING` and `GAME_OVER` states (`updateClouds`).
+- **Tactical Multi-Layered Crosshair (`content/sniper-game.js`)**:
+  - Implemented dynamic weapon-tinted outer rotating ring with 8 tick marks, inner reticle with center gap, pulsing center dot, weapon mode icon indicator (`◎SNP`, `◉SHG`, `⚡MAG`), and a real-time circular reload cooldown progress arc.
+- **Glassmorphism HUD Bar (`content/sniper-game.js`)**:
+  - Redesigned top HUD bar with frosted glass aesthetic (`rgba(20, 20, 35, 0.65)`), subtle gradient specular highlight, and glowing accent bottom border.
+  - Added pill-shaped animated combo badge with flame styling (`×N 🔥`), animated gradient player health bar (10 HP with green/amber/red dynamic color transitions), weapon slot badges with active selection indicator, and real-time ammo pips for Shotgun/Magnum.
+- **Cinematic Radar Scope Loading Screen (`content/sniper-game.js`)**:
+  - Upgraded loading phase with radial vignette background, dual rotating radar scope rings with 12 tick marks, pulsing center scope dot, glowing neon typography, and a gradient progress bar with glowing leading edge and live percentage indicator.
+- **Glassmorphism Game Over Results Card (`content/sniper-game.js`)**:
+  - Enhanced victory/defeat card with 30px drop shadow, top specular glass highlight stripe, and individual pill container backgrounds for each statistic row.
+  - Added modern gradient quit button with specular highlight, hover glow border, and smooth pointer tracking.
+- **Combat Feedback & Visual FX Polish (`content/sniper-game.js`)**:
+  - Integrated red radial vignette damage pulse on taking damage from aggressive red flasher birds.
+  - Added multi-layered weapon muzzle flash burst at crosshair coordinates.
+  - Enhanced particle explosion engine with 3-segment motion trails, outer glow halos, and shadow-blurred floating score/event text popups.
+  - Enhanced bird visuals with feather pattern curves, depth gradients, drop shadows, and pulsing radial glow rings for special targets (Golden Shiny & Red Flasher).
+  - Modernized dark-mode color palette constants with softer, high-contrast tones.
+
+---
+
 ## [2026-10-18] — Fix Block New Tab Ads Definition, Overblocking & Rule ID Collisions
 
 ### Fixed
@@ -59,6 +116,14 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
   - Added Todo filter pills (`All`, `Pending`, `🔥 Urgent`, `Done`) in the Todo List header.
   - Replaced blurry `scaleY` CSS distortion on overdue tasks with modern pulsating urgency badges and color-coded accent borders.
   - Added timezone-safe local date parsing and card expansion state preservation during edits.
+- **Enhanced Todo List UI with ETA & Dynamic Urgency (`popup.html`, `popup.js`)**:
+  - Expandable task cards with creation dates, ETAs, descriptions, and dynamic progress bar color indicators.
+  - Day summary synthesis with pre-grouped task categories in `tool_get_todos`.
+- **Thinking Animation & Dynamic Feedback (`popup.js`, `popup.html`)**:
+  - Replaced static text with an animated word-cycling indicator featuring 69 thinking synonyms cycling every 600ms with a buzzing brain emoji.
+  - Added one-click **Copy** button on AI message bubbles and **Download Chat** button to export conversations.
+- **UI Distraction-Free Rebranding**:
+  - Rebranded "Paywall" terminology to "Distraction free Reading" across all UI elements and AI directives.
 
 ### Optimized
 - **Gemini Nano Session Turn Tracking & Error Recovery (`nano-client.js`)**:
@@ -364,92 +429,3 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 - **Cookie Editor** — View, edit, lock (prevent page modification), delete cookies.
 - **Ad pattern fetch** — Peter Lowe's list on install; fallback: bundled `data/ad-patterns.json`.
 - **Manifest V3** scaffold — `declarativeNetRequest`, `webRequest` (observe-only), `cookies`, `storage`, `tabs`, `scripting`.
-## 2026-09-18
-- Fixed 'Rule does not have a unique ID' crash in ADD_BLOCK_RULE by syncing nextRuleId with existing DNR rule max.
-- Strengthened Gemini Nano Prompt API JSON action extraction regex to correctly parse LLM formatting hallucinations.
-- Restructured SYSTEM_PROMPT to severely restrict conversational outputs and force JSON blocks for actions.
-
-
-### Added
-- **Personal Assistant Tab**: A new tab beside 'Ad Blocker' powered by the local Gemini Nano LLM. It features conversational chat history, context size management, and real-time LLM telemetry (generation speed in tokens/sec, and token capacity utilization).
-- **Assistant Features Bar**: Added quick-access action chips for 'Summarise Page' (uses tool_extract_clean_content to fetch and display clean HTML in a new browser tab), 'Intent Finder', 'Calculator', 'Grammar Fixer', and 'Smart Reply'.
-- **processAssistantPrompt()**: Added dedicated streaming and execution pipeline in nano-client.js with \session.countPromptTokens()\ support.
-
-### Added
-- **Lists Tab**: A new tab for managing Notes (Scratchpad) and a Todo list.
-- **AI Integration**: The Personal Assistant can now read instructions and write directly to the user's Scratchpad or Todo list using the new \	ool_add_scratchpad\ and \	ool_add_todo\ MCP actions.
-- **Feature Chips**: Added 'Save Note' and 'Add Todo' quick-action chips in the Assistant UI.
-
-### Fixed
-- Fixed a ReferenceError crashing the extension popup on initialization caused by the Assistant/Lists scripts not being fully bundled.
-
-### Fixed
-- Fixed a syntax error in popup.js triggered by template literals breaking during the build process, preventing the popup from opening.
-
-### Fixed
-- Fixed an issue where the Personal Assistant only outputted 'Action completed.' for normal chat messages. The assistant now uses a dedicated conversation prompt instead of the strict adblocker prompt, allowing it to chat naturally.
-
-### Fixed
-- Fixed a CSP `unsafe-eval` error preventing the Personal Assistant from extracting page text. The assistant now falls back to a custom Zero-Eval Engine in the content script when chrome.scripting.executeScript is blocked by strict Content Security Policies.
-- Added a second pass LLM synthesis loop for the Personal Assistant to natively summarize text extracted via 	ool_extract_clean_content.
-- Fixed an issue in the Ad Blocker tab where 	ool_execute_js_script output (like anchor link tables) was silently dropped, rendering as 'Action completed'. The .report payload is now correctly displayed in the UI.
-
-### Fixed
-- Fixed 'Extract anchor links' chip in the Ad Blocker tab. Previously, the LLM incorrectly called `tool_extract_clean_content` instead of extracting links. Added `tool_extract_anchor_links` and `tool_extract_floating_boxes` as direct-intent tools that bypass the LLM entirely, executing DOM queries via the content script and returning rich Markdown table reports.
-- Anchor link extraction now shows at most 100 links in the table. When >100 are found, a 'Download All' button appears in the action card to save the full list as a .txt file.
-
-### Added
-- **Thinking Animation**: Replaced the static 'Thinking...' text in the Personal Assistant with an animated word-cycling indicator. 69 synonyms of 'thinking' (Pondering, Contemplating, Musing, etc.) cycle every 600ms with a buzzing brain emoji animation. Starting word is randomized for variety.
-
-### Fixed
-- Fixed an issue in the Personal Assistant where DOM queries (via \	ool_execute_js_script\) dumped raw JSON blocks instead of human-readable text. Enabled the second-pass synthesis engine to process \	ool_execute_js_script\ outputs so the AI can read the JSON and answer naturally.
-
-### Fixed
-- Tuned the Personal Assistant prompt to correctly prioritize \	ool_execute_js_script\ for counting specific words or extracting specific elements, rather than defaulting to full-page summarization.
-- Added explicit instructions to the second-pass synthesizer to extract exact URLs and values from JSON output to prevent the AI from hallucinating missing data.
-
-### Added
-- Enhanced Todo List with Expandable UI showing Creation Date, ETA, and Descriptions.
-- Added dynamic progress bar backgrounds for tasks based on ETA (Green -> Yellow -> Red).
-- Added CSS animations for Overdue tasks: scales up 5% per day overdue (max 20%), and ignites with animated fire at 5+ days overdue.
-- Gave Personal Assistant awareness of the current date and time so it can accurately calculate ETAs like 'next Friday'.
-
-- Added inline editing capabilities for Tasks: The manual Add bar now has ETA and Description fields, and expanding an existing task reveals editable fields that auto-save.
-
-- Fixed ETA Date Pickers to cap maximum selection at +5 years, defaulting to +2 days for out-of-bounds dates.
-- Fixed CSS z-indexing bug that hid the green/yellow/red progress bars behind the task background.
-- Refined overdue task scaling animation to scale vertically only (scaleY), avoiding text overlap issues.
-
-- Adjusted ETA bounds to allow selecting dates up to 1 month in the past.
-- Standardized CSS styling for the manual Optional Description input so it matches the main task input exactly.
-- Provided the Personal Assistant tool_get_todos() access to the Todo List and instructed it to provide structured Day Summaries when requested.
-
-- Hardened tool_get_todos instruction formatting in Personal Assistant's prompt to avoid tool_code hallucinations.
-- Fixed Personal Assistant quick action chips overflow by using flex-wrap.
-- Tweaked task overdue vertical scaling to 7% per day (max 35%).
-- Moved 'Summarize my day' button from Ad Blocker tab to Personal Assistant tab.
-- Fixed 'Summarize my day' outputting raw JSON by enabling the LLM synthesis pass for tool_get_todos.
-- Stripped 'Action Executed: Fetched Tasks' prefix from Day Summary output.
-- Injected date-math categorization ('suggestedCategory') directly into the tool_get_todos payload to prevent Gemini Nano from miscategorizing task ETAs.
-- Increased entire popup width by 10% (520px -> 575px) and base font to 13px.
-- Added CSS list margins/padding for Assistant AI messages to fix indentation.
-- Updated tool_get_todos to filter out completed tasks and label them 'Complete'.
-- Updated AI system prompt to include '✅ Complete' section in Day Summary.
-- Pre-grouped tasks into categories directly inside tool_get_todos payload. The AI now only has to print the pre-grouped JSON as markdown without doing any grouping logic, preventing it from incorrectly classifying completed tasks as active priorities.
-- Reordered features in README.md to prioritize AI, Ad Blocker, Element Picker, and Sniping Mode.
-- Added a quick navigation Index to README.md.
-- Greatly simplified the 'How to Enable Chrome Built-in AI' section in README.md to make it highly user-friendly.
-- Reordered features in README.md to bump Scratchpad & Todo Lists to the 5th spot.
-
-- Fixed an issue where the AI content extraction returned '0 words' on sites like India Today due to aggressive 'aria-hidden' attribute stripping.
-- Improved readability of extracted text by adding spacing between block elements and increased character limit to handle larger articles.
-
-- Improved 'Summarize my Day' output in Personal Assistant by explicitly formatting as Markdown, bypassing AI summarization which was degrading the formatting.
-- Added a 'Copy' button on AI messages in Personal Assistant for easy text copying.
-- Added a 'Download Chat' button to export the assistant chat history as a text file.
-
-- Fixed 'Summarize my Day' output leaking raw HTML by replacing it with standard markdown and added strikethrough parsing support to the AI message renderer.
-
-- Fixed an issue where the AI would hallucinate the Day Summary repeatedly when trying to extract page content, caused by context contamination in Gemini Nano's prompt.
-- Rebranded 'Paywall' to 'Distraction free Reading' across UI elements.
-- Offloaded AI processing to service-worker.js to allow Assistant queries to complete in the background even if the popup is closed.

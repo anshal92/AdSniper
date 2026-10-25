@@ -36,19 +36,19 @@ window.AdSniperGame = (() => {
   const LOADING_DELAY_MS  = 3000;   // Wait for ads to render before scanning
   const CROSSHAIR_SIZE    = 20;     // Crosshair radius in px
 
-  // Colors
-  const COLOR_BG        = 'rgba(15, 15, 23, 0.75)';
-  const COLOR_HUD_BG    = 'rgba(28, 28, 40, 0.9)';
-  const COLOR_TEXT       = '#e8e8f0';
-  const COLOR_ACCENT    = '#7c6aff';
-  const COLOR_GREEN      = '#22c55e';
-  const COLOR_RED        = '#ef4444';
-  const COLOR_AMBER      = '#f59e0b';
-  const COLOR_MUTED      = '#6b6b88';
+  // Colors — refined modern dark palette
+  const COLOR_BG        = 'rgba(10, 10, 20, 0.80)';
+  const COLOR_HUD_BG    = 'rgba(18, 18, 32, 0.75)';
+  const COLOR_TEXT       = '#eaeaf4';
+  const COLOR_ACCENT    = '#8b7aff';
+  const COLOR_GREEN      = '#34d399';
+  const COLOR_RED        = '#f87171';
+  const COLOR_AMBER      = '#fbbf24';
+  const COLOR_MUTED      = '#7878a0';
 
   const BIRD_COLORS = [
-    '#ef4444', '#f97316', '#f59e0b', '#22c55e',
-    '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
+    '#f87171', '#fb923c', '#fbbf24', '#34d399',
+    '#60a5fa', '#a78bfa', '#f472b6', '#22d3ee',
   ];
 
   // Weapon system
@@ -135,6 +135,10 @@ window.AdSniperGame = (() => {
 
   // Smoothed delta time
   let smoothDt = 1.0;
+
+  // Sky & stars
+  let stars = [];
+  let skyHue = 0;
 
   // Red bird proximity tracking (birdId -> frames in range)
   let redBirdProximity = new Map();
@@ -765,6 +769,28 @@ window.AdSniperGame = (() => {
     roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
     tCtx.fill();
 
+    // Feather pattern overlay
+    tCtx.globalAlpha = 0.15;
+    tCtx.strokeStyle = '#000';
+    tCtx.lineWidth = 1;
+    for (let fi = 0; fi < 5; fi++) {
+      const fy = s * 0.25 + fi * s * 0.1;
+      tCtx.beginPath();
+      tCtx.moveTo(s * 0.15, fy);
+      tCtx.quadraticCurveTo(s * 0.5, fy - s * 0.03, s * 0.85, fy);
+      tCtx.stroke();
+    }
+    tCtx.globalAlpha = 1;
+
+    // Gradient overlay for depth
+    const bodyGrad = tCtx.createLinearGradient(0, 0, 0, s);
+    bodyGrad.addColorStop(0, 'rgba(255,255,255,0.15)');
+    bodyGrad.addColorStop(0.5, 'rgba(0,0,0,0)');
+    bodyGrad.addColorStop(1, 'rgba(0,0,0,0.2)');
+    tCtx.fillStyle = bodyGrad;
+    roundRect(tCtx, 2, 2, s - 4, s - 4, s * 0.15);
+    tCtx.fill();
+
     // Inner glow
     tCtx.globalAlpha = 0.3;
     tCtx.fillStyle = '#fff';
@@ -1071,8 +1097,8 @@ window.AdSniperGame = (() => {
         bounced = true;
       }
 
-      if (bird.y < half + 42) { // Stay below top HUD
-        bird.y = half + 42;
+      if (bird.y < half + 50) { // Stay below top HUD
+        bird.y = half + 50;
         bird.directionAngle = Math.round((360 - bird.directionAngle + 360) % 360) || 360;
         bounced = true;
       } else if (bird.y > vh - half) {
@@ -1143,21 +1169,46 @@ window.AdSniperGame = (() => {
     for (const p of particles) {
       const alpha = p.life / p.maxLife;
       if (p.isText) {
+        // Text popups with glow
+        ctx.save();
         ctx.globalAlpha = alpha;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
         ctx.fillStyle = p.color;
         ctx.font = `bold 18px 'Segoe UI', system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.fillText(p.text, p.x, p.y);
-        ctx.globalAlpha = 1;
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.restore();
       } else {
+        // Motion trail (3 trail segments)
+        for (let t = 0; t < 3; t++) {
+          const trailAlpha = alpha * (1 - t * 0.3) * 0.4;
+          ctx.globalAlpha = trailAlpha;
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x - p.vx * t * 0.6, p.y - p.vy * t * 0.6, p.size * (1 - t * 0.2), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Main particle with glow
         ctx.globalAlpha = alpha;
         ctx.fillStyle = p.color;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
+
+        // Outer glow
+        ctx.globalAlpha = alpha * 0.3;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * 2, 0, Math.PI * 2);
+        ctx.fill();
+
         ctx.globalAlpha = 1;
       }
     }
+    ctx.globalAlpha = 1;
   }
 
   // ═══════════════════════════════════════════════
@@ -1284,16 +1335,75 @@ window.AdSniperGame = (() => {
   function renderClouds() {
     for (const c of clouds) {
       ctx.globalAlpha = c.alpha;
-      ctx.fillStyle = '#ffffff';
+
+      // Main puff with radial gradient
+      const grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.w / 2);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+      grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.2)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.ellipse(c.x, c.y, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
       ctx.fill();
+
       // Secondary puff
+      const grad2 = ctx.createRadialGradient(c.x - c.w * 0.25, c.y + c.h * 0.15, 0,
+                                             c.x - c.w * 0.25, c.y + c.h * 0.15, c.w * 0.35);
+      grad2.addColorStop(0, 'rgba(255, 255, 255, 0.4)');
+      grad2.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = grad2;
       ctx.beginPath();
       ctx.ellipse(c.x - c.w * 0.25, c.y + c.h * 0.15, c.w * 0.35, c.h * 0.4, 0, 0, Math.PI * 2);
       ctx.fill();
+
+      // Tertiary puff
+      const grad3 = ctx.createRadialGradient(c.x + c.w * 0.2, c.y + c.h * 0.1, 0,
+                                             c.x + c.w * 0.2, c.y + c.h * 0.1, c.w * 0.3);
+      grad3.addColorStop(0, 'rgba(255, 255, 255, 0.35)');
+      grad3.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = grad3;
       ctx.beginPath();
       ctx.ellipse(c.x + c.w * 0.2, c.y + c.h * 0.1, c.w * 0.3, c.h * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ═══════════════════════════════════════════════
+  //  STARS & SKY SYSTEM
+  // ═══════════════════════════════════════════════
+
+  function initStars(vw, vh) {
+    stars = [];
+    for (let i = 0; i < 60; i++) {
+      stars.push({
+        x: Math.random() * vw,
+        y: Math.random() * vh * 0.7,
+        radius: 0.5 + Math.random() * 1.5,
+        twinkleSpeed: 0.02 + Math.random() * 0.04,
+        twinklePhase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  function renderSky(vw, vh) {
+    // Animated gradient sky
+    skyHue = (skyHue + 0.05) % 360;
+    const grad = ctx.createLinearGradient(0, 0, 0, vh);
+    grad.addColorStop(0, 'hsla(230, 40%, 8%, 0.85)');
+    grad.addColorStop(0.5, 'hsla(260, 35%, 12%, 0.80)');
+    grad.addColorStop(1, 'hsla(280, 25%, 15%, 0.75)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, vw, vh);
+
+    // Twinkling stars
+    for (const s of stars) {
+      s.twinklePhase += s.twinkleSpeed;
+      const alpha = 0.3 + Math.sin(s.twinklePhase) * 0.3;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -1522,9 +1632,11 @@ window.AdSniperGame = (() => {
       return;
     }
 
-    // Semi-transparent background
-    ctx.fillStyle = COLOR_BG;
-    ctx.fillRect(0, 0, vw, vh);
+    // Animated gradient sky background + stars
+    renderSky(vw, vh);
+
+    // Render clouds behind birds
+    renderClouds();
 
     if (gameState === 'PLAYING' || gameState === 'GAME_OVER') {
       // Draw birds
@@ -1533,8 +1645,36 @@ window.AdSniperGame = (() => {
         renderBird(bird);
       }
 
+      // Damage flash vignette
+      if (damageFlashTimer > 0) {
+        const flashAlpha = (damageFlashTimer / DAMAGE_FLASH_FRAMES) * 0.4;
+        const vigGrad = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.3, vw / 2, vh / 2, vh * 0.8);
+        vigGrad.addColorStop(0, 'rgba(248, 113, 113, 0)');
+        vigGrad.addColorStop(1, `rgba(248, 113, 113, ${flashAlpha})`);
+        ctx.fillStyle = vigGrad;
+        ctx.fillRect(0, 0, vw, vh);
+        damageFlashTimer--;
+      }
+
       // Draw particles
       renderParticles();
+
+      // Muzzle flash cone
+      if (muzzleFlashTimer > 0) {
+        const mfAlpha = (muzzleFlashTimer / 4) * 0.5;
+        ctx.globalAlpha = mfAlpha;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(mouseX, mouseY, 18 * (muzzleFlashTimer / 4), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = currentWeapon === 'magnum' ? '#f87171' :
+                        currentWeapon === 'shotgun' ? '#fb923c' : COLOR_GREEN;
+        ctx.beginPath();
+        ctx.arc(mouseX, mouseY, 10 * (muzzleFlashTimer / 4), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        muzzleFlashTimer--;
+      }
 
       // Draw HUD
       renderHUD(vw, vh);
@@ -1587,142 +1727,377 @@ window.AdSniperGame = (() => {
 
     ctx.globalAlpha = 1;
 
-    // Draw body (texture)
+    // Draw body (texture with drop shadow)
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetX = 4;
+    ctx.shadowOffsetY = 6;
+
     ctx.drawImage(
       bird.texture,
       -bird.size / 2, -bird.size / 2,
       bird.size, bird.size
     );
 
+    // Reset shadow
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Pulsing glow ring for special birds
+    if (bird.type === 'shiny') {
+      const glowAlpha = 0.3 + Math.sin(frameCount * 0.08) * 0.2;
+      ctx.globalAlpha = glowAlpha;
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, bird.size * 0.6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else if (bird.type === 'red_flasher') {
+      const glowAlpha = 0.4 + Math.sin(frameCount * 0.12) * 0.3;
+      ctx.globalAlpha = glowAlpha;
+      ctx.strokeStyle = '#f87171';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, bird.size * 0.6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     ctx.restore();
   }
 
   function renderCrosshair() {
     const r = CROSSHAIR_SIZE;
-    ctx.strokeStyle = COLOR_GREEN;
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = 0.9;
+    const weaponColor = currentWeapon === 'magnum' ? '#f87171'
+                      : currentWeapon === 'shotgun' ? '#fb923c'
+                      : COLOR_GREEN;
 
-    // Outer circle
+    // Outer rotating ring with tick marks
+    ctx.save();
+    ctx.translate(mouseX, mouseY);
+    ctx.rotate(frameCount * 0.015);
+    ctx.strokeStyle = weaponColor;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 8, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle) * (r + 5), Math.sin(angle) * (r + 5));
+      ctx.lineTo(Math.cos(angle) * (r + 11), Math.sin(angle) * (r + 11));
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Inner static circle
+    ctx.strokeStyle = weaponColor;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.85;
     ctx.beginPath();
     ctx.arc(mouseX, mouseY, r, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Inner dot
-    ctx.fillStyle = COLOR_GREEN;
+    // Crosshair lines (gap in center)
     ctx.beginPath();
-    ctx.arc(mouseX, mouseY, 3, 0, Math.PI * 2);
+    ctx.moveTo(mouseX - r - 8, mouseY);
+    ctx.lineTo(mouseX - r / 2.5, mouseY);
+    ctx.moveTo(mouseX + r / 2.5, mouseY);
+    ctx.lineTo(mouseX + r + 8, mouseY);
+    ctx.moveTo(mouseX, mouseY - r - 8);
+    ctx.lineTo(mouseX, mouseY - r / 2.5);
+    ctx.moveTo(mouseX, mouseY + r / 2.5);
+    ctx.lineTo(mouseX, mouseY + r + 8);
+    ctx.stroke();
+
+    // Center dot (pulsing)
+    const dotPulse = 2.5 + Math.sin(frameCount * 0.1) * 0.8;
+    ctx.fillStyle = weaponColor;
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, dotPulse, 0, Math.PI * 2);
     ctx.fill();
 
-    // Crosshair lines
-    ctx.beginPath();
-    ctx.moveTo(mouseX - r - 6, mouseY);
-    ctx.lineTo(mouseX - r / 2, mouseY);
-    ctx.moveTo(mouseX + r / 2, mouseY);
-    ctx.lineTo(mouseX + r + 6, mouseY);
-    ctx.moveTo(mouseX, mouseY - r - 6);
-    ctx.lineTo(mouseX, mouseY - r / 2);
-    ctx.moveTo(mouseX, mouseY + r / 2);
-    ctx.lineTo(mouseX, mouseY + r + 6);
-    ctx.stroke();
+    // Reload arc indicator
+    if (reloadTimer > 0) {
+      const w = WEAPONS[currentWeapon];
+      const progress = 1 - (reloadTimer / w.reloadTime);
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(mouseX, mouseY, r + 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.stroke();
+    }
+
+    // Weapon icon label below crosshair
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = weaponColor;
+    ctx.font = `bold 9px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const icon = currentWeapon === 'magnum' ? '⚡MAG' : currentWeapon === 'shotgun' ? '◉SHG' : '◎SNP';
+    ctx.fillText(icon, mouseX, mouseY + r + 14);
 
     ctx.globalAlpha = 1;
   }
 
   function renderHUD(vw, vh) {
     const padding = 14;
-    const barH = 40;
+    const barH = 48;
 
-    // Top bar background
-    ctx.fillStyle = COLOR_HUD_BG;
+    // ── Glassmorphism background ──
+    ctx.fillStyle = 'rgba(20, 20, 35, 0.65)';
     ctx.fillRect(0, 0, vw, barH);
 
-    // Bottom border line
-    ctx.fillStyle = COLOR_ACCENT;
+    // Subtle gradient highlight on top edge
+    const hudGrad = ctx.createLinearGradient(0, 0, 0, barH);
+    hudGrad.addColorStop(0, 'rgba(124, 106, 255, 0.12)');
+    hudGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = hudGrad;
+    ctx.fillRect(0, 0, vw, barH);
+
+    // Bottom border — glowing accent line
+    const borderGrad = ctx.createLinearGradient(0, 0, vw, 0);
+    borderGrad.addColorStop(0, 'rgba(124, 106, 255, 0)');
+    borderGrad.addColorStop(0.3, COLOR_ACCENT);
+    borderGrad.addColorStop(0.7, COLOR_ACCENT);
+    borderGrad.addColorStop(1, 'rgba(124, 106, 255, 0)');
+    ctx.fillStyle = borderGrad;
     ctx.fillRect(0, barH - 2, vw, 2);
 
     ctx.textBaseline = 'middle';
     const cy = barH / 2;
+    let xCursor = padding;
 
-    // Score
+    // ── Score with icon ──
     ctx.fillStyle = COLOR_GREEN;
     ctx.font = `bold 16px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'left';
-    ctx.fillText(`🎯 SCORE: ${score.toLocaleString()}`, padding, cy);
+    ctx.fillText(`🎯 ${score.toLocaleString()}`, xCursor, cy);
+    xCursor += ctx.measureText(`🎯 ${score.toLocaleString()}`).width + 20;
 
-    // Combo
+    // ── Combo badge (pill-shaped) ──
     const multiplier = getComboMultiplier();
     if (multiplier > 1) {
+      const comboPillW = 65;
+      const comboPillH = 22;
+      const comboPillY = cy - comboPillH / 2;
+      // Pill bg
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.2)';
+      roundRect(ctx, xCursor, comboPillY, comboPillW, comboPillH, 11);
+      ctx.fill();
+      ctx.strokeStyle = COLOR_AMBER;
+      ctx.lineWidth = 1;
+      roundRect(ctx, xCursor, comboPillY, comboPillW, comboPillH, 11);
+      ctx.stroke();
+      // Pill text
       ctx.fillStyle = COLOR_AMBER;
-      ctx.font = `bold 14px 'Segoe UI', system-ui, sans-serif`;
-      ctx.fillText(`×${multiplier} COMBO`, 200, cy);
+      ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`×${multiplier} 🔥`, xCursor + comboPillW / 2, cy);
+      xCursor += comboPillW + 14;
     }
 
-    // Birds remaining, Misses & Multikills
+    // ── Center: Birds remaining ──
     ctx.fillStyle = COLOR_TEXT;
     ctx.font = `13px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    let centerText = `🐦 ${birdsHit}/${totalBirds} Birds`;
-    if (shotsMissed > 0) {
-      centerText += `  |  ❌ ${shotsMissed} Missed`;
-    }
-    if (multikillCount > 0) {
-      centerText += `  |  ⚡ ${multikillCount} Multikill${multikillCount > 1 ? 's' : ''}`;
-    }
+    let centerText = `🐦 ${birdsHit}/${totalBirds}`;
+    if (shotsMissed > 0) centerText += `  ❌ ${shotsMissed}`;
+    if (multikillCount > 0) centerText += `  ⚡ ${multikillCount}`;
     ctx.fillText(centerText, vw / 2, cy);
 
-    // Exit hint
-    ctx.fillStyle = COLOR_MUTED;
-    ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+    // ── Health bar (right side) ──
+    const hpBarW = 100;
+    const hpBarH = 10;
+    const hpBarX = vw - padding - hpBarW - 130;
+    const hpBarY = cy - hpBarH / 2;
+    const hpPct = playerHealth / MAX_HEALTH;
+
+    // HP Background
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    roundRect(ctx, hpBarX, hpBarY, hpBarW, hpBarH, 5);
+    ctx.fill();
+    // HP Fill (green → amber → red)
+    const hpColor = hpPct > 0.6 ? COLOR_GREEN : hpPct > 0.3 ? COLOR_AMBER : COLOR_RED;
+    ctx.fillStyle = hpColor;
+    roundRect(ctx, hpBarX, hpBarY, hpBarW * hpPct, hpBarH, 5);
+    ctx.fill();
+    // HP Label
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.font = `bold 10px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'right';
-    ctx.fillText('[ESC] Exit Game', vw - padding, cy);
+    ctx.fillText(`❤️ ${playerHealth}`, hpBarX - 6, cy);
+
+    // ── Weapon slots (right edge) ──
+    const slotSize = 26;
+    const slotGap = 4;
+    const slotsX = vw - padding - (slotSize + slotGap) * 3 - 40;
+
+    WEAPON_ORDER.forEach((wName, i) => {
+      const sx = slotsX + i * (slotSize + slotGap);
+      const sy = cy - slotSize / 2;
+      const isActive = wName === currentWeapon;
+
+      // Slot background
+      ctx.fillStyle = isActive ? 'rgba(124, 106, 255, 0.3)' : 'rgba(255,255,255,0.05)';
+      roundRect(ctx, sx, sy, slotSize, slotSize, 4);
+      ctx.fill();
+      if (isActive) {
+        ctx.strokeStyle = COLOR_ACCENT;
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, sx, sy, slotSize, slotSize, 4);
+        ctx.stroke();
+      }
+      // Slot icon
+      ctx.fillStyle = isActive ? '#fff' : COLOR_MUTED;
+      ctx.font = `${isActive ? 'bold ' : ''}10px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const wIcon = wName === 'sniper' ? '◎' : wName === 'shotgun' ? '◉' : '⚡';
+      ctx.fillText(wIcon, sx + slotSize / 2, cy);
+    });
+
+    // ── Ammo pips under weapon slots ──
+    if (currentWeapon !== 'sniper') {
+      const w = WEAPONS[currentWeapon];
+      const pipR = 2.5;
+      const pipGap = 7;
+      const totalPipW = w.maxAmmo * pipGap;
+      const pipStartX = slotsX + ((slotSize + slotGap) * 3 - totalPipW) / 2 + pipR;
+      for (let i = 0; i < w.maxAmmo; i++) {
+        const filled = i < ammo[currentWeapon];
+        ctx.fillStyle = filled ? COLOR_AMBER : 'rgba(255,255,255,0.12)';
+        ctx.beginPath();
+        ctx.arc(pipStartX + i * pipGap, barH + 8, pipR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // ── ESC hint (far right) ──
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `10px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('[ESC]', vw - padding, cy);
   }
 
   function renderLoadingScreen(vw, vh, dt = 1) {
-    // Full dark background
-    ctx.fillStyle = 'rgba(15, 15, 23, 0.92)';
+    // Full dark background with vignette
+    ctx.fillStyle = '#0a0a14';
+    ctx.fillRect(0, 0, vw, vh);
+
+    // Radial vignette
+    const vigGrad = ctx.createRadialGradient(vw / 2, vh / 2, 0, vw / 2, vh / 2, vw * 0.7);
+    vigGrad.addColorStop(0, 'rgba(30, 20, 60, 0.3)');
+    vigGrad.addColorStop(1, 'rgba(0, 0, 0, 0.6)');
+    ctx.fillStyle = vigGrad;
     ctx.fillRect(0, 0, vw, vh);
 
     const cx = vw / 2;
     const cy = vh / 2;
 
-    // Spinning crosshair animation (time-based)
-    loadingAngle += 0.05 * dt;
+    // ── Pulsing scope rings ──
+    loadingAngle += 0.04 * dt;
+    const pulse = Math.sin(loadingAngle * 2) * 0.15 + 0.85;
+
+    // Outer ring (slow rotate)
     ctx.save();
-    ctx.translate(cx, cy - 60);
+    ctx.translate(cx, cy - 70);
+    ctx.rotate(loadingAngle * 0.5);
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, 55, 0, Math.PI * 2);
+    ctx.stroke();
+    // Tick marks
+    for (let i = 0; i < 12; i++) {
+      const a = (Math.PI * 2 * i) / 12;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 50, Math.sin(a) * 50);
+      ctx.lineTo(Math.cos(a) * 55, Math.sin(a) * 55);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Main spinner arc
+    ctx.save();
+    ctx.translate(cx, cy - 70);
     ctx.rotate(loadingAngle);
     ctx.strokeStyle = COLOR_GREEN;
     ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(0, 0, 30, 0, Math.PI * 1.5);
+    ctx.arc(0, 0, 35 * pulse, 0, Math.PI * 1.4);
     ctx.stroke();
     ctx.restore();
 
-    // Title
+    // Center scope dot
     ctx.fillStyle = COLOR_GREEN;
-    ctx.font = `bold 24px 'Segoe UI', system-ui, sans-serif`;
+    ctx.globalAlpha = 0.5 + Math.sin(loadingAngle * 3) * 0.3;
+    ctx.beginPath();
+    ctx.arc(cx, cy - 70, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // ── Title with glow ──
+    ctx.shadowColor = COLOR_GREEN;
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.font = `bold 28px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('🔫 SNIPING MODE', cx, cy + 10);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
 
-    // Subtitle
+    // ── Subtitle ──
     ctx.fillStyle = COLOR_TEXT;
     ctx.font = `14px 'Segoe UI', system-ui, sans-serif`;
-    ctx.fillText(loadingMessage, cx, cy + 45);
+    ctx.globalAlpha = 0.7 + Math.sin(loadingAngle * 1.5) * 0.3;
+    ctx.fillText(loadingMessage, cx, cy + 48);
+    ctx.globalAlpha = 1;
 
-    // Progress bar
-    const barW = 300;
-    const barH = 6;
+    // ── Animated progress bar with glow ──
+    const barW = 340;
+    const barH = 8;
     const barX = cx - barW / 2;
-    const barY = cy + 70;
+    const barY = cy + 75;
 
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    roundRect(ctx, barX, barY, barW, barH, 3);
+    // Track
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    roundRect(ctx, barX, barY, barW, barH, 4);
     ctx.fill();
 
-    ctx.fillStyle = COLOR_GREEN;
-    roundRect(ctx, barX, barY, barW * loadingProgress, barH, 3);
-    ctx.fill();
+    // Fill with gradient
+    const progressW = barW * loadingProgress;
+    if (progressW > 0) {
+      const pGrad = ctx.createLinearGradient(barX, 0, barX + progressW, 0);
+      pGrad.addColorStop(0, '#34d399');
+      pGrad.addColorStop(1, '#6ee7b7');
+      ctx.fillStyle = pGrad;
+      roundRect(ctx, barX, barY, progressW, barH, 4);
+      ctx.fill();
+
+      // Glow on leading edge
+      ctx.shadowColor = COLOR_GREEN;
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#6ee7b7';
+      ctx.beginPath();
+      ctx.arc(barX + progressW, barY + barH / 2, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+    }
+
+    // ── Percentage text ──
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`${Math.round(loadingProgress * 100)}%`, cx, barY + barH + 18);
   }
 
   function renderGameOver(vw, vh, dt = 1) {
@@ -1750,9 +2125,28 @@ window.AdSniperGame = (() => {
     const cardW = 500;
     const cardH = 430;
 
+    // Card drop shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 30;
+    ctx.shadowOffsetY = 8;
+
     // Card background
     ctx.fillStyle = COLOR_HUD_BG;
     roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 16);
+    ctx.fill();
+
+    // Reset shadow
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Glass highlight stripe across top of card
+    const glassGrad = ctx.createLinearGradient(cx - cardW / 2, cy - cardH / 2, cx + cardW / 2, cy - cardH / 2 + 60);
+    glassGrad.addColorStop(0, 'rgba(255,255,255,0)');
+    glassGrad.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+    glassGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glassGrad;
+    roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, 60, 16);
     ctx.fill();
 
     // Card border (golden glow if accuracy > 80%)
@@ -1782,8 +2176,17 @@ window.AdSniperGame = (() => {
     ctx.font = `bold 22px 'Segoe UI', system-ui, sans-serif`;
     ctx.fillText(`Score: ${score.toLocaleString()}`, cx, isHighAccuracy ? cy - 114 : cy - 122);
 
-    // Stats Grid
+    // Stats Grid with Pill Backgrounds
     ctx.font = `14px 'Segoe UI', system-ui, sans-serif`;
+
+    const statRows = [-70, -40, -10, 20];
+    for (const rY of statRows) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      roundRect(ctx, cx - 195, cy + rY - 11, 185, 22, 6);
+      ctx.fill();
+      roundRect(ctx, cx + 18, cy + rY - 11, 185, 22, 6);
+      ctx.fill();
+    }
 
     // Row 1: Birds Hit & Shots Missed
     ctx.fillStyle = COLOR_MUTED;
@@ -1850,15 +2253,23 @@ window.AdSniperGame = (() => {
       canvas.style.cursor = isHover ? 'pointer' : 'default';
     }
 
-    // Button Background
-    ctx.fillStyle = isHover ? '#dc2626' : 'rgba(239, 68, 68, 0.25)';
-    roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+    // Gradient button background
+    const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+    btnGrad.addColorStop(0, isHover ? '#ef4444' : '#dc2626');
+    btnGrad.addColorStop(1, isHover ? '#dc2626' : '#991b1b');
+    ctx.fillStyle = btnGrad;
+    roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+    ctx.fill();
+
+    // Subtle inner highlight
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    roundRect(ctx, btnX + 2, btnY + 2, btnW - 4, btnH / 2 - 2, 8);
     ctx.fill();
 
     // Button Border
-    ctx.strokeStyle = isHover ? '#f87171' : '#ef4444';
-    ctx.lineWidth = 2;
-    roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+    ctx.strokeStyle = isHover ? '#fca5a5' : '#f87171';
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, btnX, btnY, btnW, btnH, 10);
     ctx.stroke();
 
     // Button Text
@@ -1906,6 +2317,7 @@ window.AdSniperGame = (() => {
     if (gameState === 'PLAYING') {
       updateBirds(dt);
       updateParticles(dt);
+      updateClouds(canvas.width, dt);
 
       // Auto-decay combo
       if (combo > 0 && Date.now() - lastHitTime > COMBO_DECAY_MS) {
@@ -1913,6 +2325,7 @@ window.AdSniperGame = (() => {
       }
     } else if (gameState === 'GAME_OVER') {
       updateParticles(dt);
+      updateClouds(canvas.width, dt);
       const totalShots = birdsHit + shotsMissed;
       const accuracy = totalShots > 0 ? Math.round((birdsHit / totalShots) * 100) : (totalBirds > 0 ? 0 : 100);
       if (accuracy > 80) {
@@ -2179,6 +2592,12 @@ window.AdSniperGame = (() => {
     loadingProgress = 0.95;
     loadingMessage = `Found ${adData.length} target${adData.length > 1 ? 's' : ''} — preparing...`;
     await new Promise((r) => setTimeout(r, 500));
+
+    // Initialize sky elements
+    const vw = canvas.width;
+    const vh = canvas.height;
+    initClouds(vw, vh);
+    initStars(vw, vh);
 
     birds = createBirds(adData);
     totalBirds = birds.length;

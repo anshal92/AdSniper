@@ -18,6 +18,7 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
   - [📋 5. Scratchpad & Todo Lists](#-5-scratchpad--todo-lists)
   - [🚫 6. Intrusive Pop-up & Anti-Adblock Interceptor](#-6-intrusive-pop-up--anti-adblock-interceptor)
   - [🍪 7. Advanced Cookie Manager & Lock System](#-7-advanced-cookie-manager--lock-system)
+  - [📐 8. Popup Resize System](#-8-popup-resize-system)
 - [📦 How to Install](#-how-to-install)
 - [🧠 How to Enable Chrome Built-in AI (Gemini Nano)](#-how-to-enable-chrome-built-in-ai-gemini-nano)
 - [🎮 How to Play Sniping Mode](#-how-to-play-sniping-mode)
@@ -72,10 +73,14 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
 - **Declarative Rule Engine**: Built on Chrome's native `declarativeNetRequest` (DNR) API for lightning-fast request blocking with minimal memory and CPU overhead.
 - **Mass-Block Filter List**: Bundled with comprehensive ad host definitions (Peter Lowe’s list and curated patterns) to block thousands of tracking, telemetry, and advertising servers.
 - **Live Request Monitor**: Inspect outgoing network requests in real time per tab (up to 200 requests logged), complete with request types, domains, and single-click custom rule creation.
+- **Save Domain Blocklist & Export**: Save any request domain directly to your persistent custom blocklist with the **💾 Save** button (auto-registers dynamic DNR rules and hides matching elements), and export the full blocked domain list as a `.txt` file at any time.
 - **Per-Rule Hit Counters**: Track exactly how many ads each rule has eliminated with real-time badge counters.
 
 ### 🎯 3. Element Picker & iFrame Purger
-- **Visual Element Picker**: Click **🎯 Pick Element**, hover over any unwanted page component with a red highlight guide, and click to remove it and generate a persistent blocking rule.
+- **Visual Element Picker**: Click **🎯 Pick Element**, hover over any unwanted page component with a red highlight guide, and click to **permanently delete** it from the DOM and generate a persistent blocking rule.
+- **Target Indicator Card**: While picking, a visual indicator card displays the element's tag, ID, class, dimensions, and source domain so you know exactly what you're about to remove.
+- **Keyboard Navigation**: Use **↑/W** to expand selection to the parent container, **↓/S** to narrow to a child element, **Enter** to confirm deletion, and **Esc** to cancel.
+- **Smart Container Detection**: `findTargetContainer()` walks up from leaf elements to the best enclosing ad container, ensuring entire ad units are removed cleanly.
 - **Automated iFrame Eradicator**: Scans the DOM using multi-point heuristics (known ad sizes, suspicious source URLs, sandbox attributes) and completely removes sneaky ad iframes from the page.
 
 ### 🔫 4. Gamified Sniping Mode (Turn Ads into Targets!)
@@ -91,7 +96,7 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
   - **Interactive Results Screen**: Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
 
 ### 📋 5. Scratchpad & Todo Lists
-- **Dedicated "📋 Lists" Tab**: A side-by-side panel with a persistent **Scratchpad** notepad and a **Todo List** task manager.
+- **Dedicated "📋 Lists" Tab**: A panel with a persistent **Todo List** at the top for task visibility and a **Scratchpad** notepad at the bottom.
 - **Manual & AI-Powered**: Add notes and tasks manually, or let the Personal Assistant write to them autonomously during chat (e.g., *"Summarize this article and save key points to my scratchpad"* or *"Add 'review PR' to my todo list"*).
 - **Todo Management**: Add tasks, check them off, clear completed items, or delete individual tasks.
 - **Persistent Storage**: All data is saved instantly to `chrome.storage.local` and persists across popup reopens and browser restarts.
@@ -105,6 +110,11 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
 ### 🍪 7. Advanced Cookie Manager & Lock System
 - **Cookie Inspector**: View, inspect, create, and edit cookies for the active domain.
 - **Cookie Lock Protection**: Lock critical or sensitive cookies to prevent websites or third-party scripts from modifying or overwriting your session preferences during browsing.
+
+### 📐 8. Popup Resize System
+- **S/M/L Size Presets**: Quickly resize the popup window using Small, Medium, or Large preset buttons.
+- **Drag-Resize Handle**: Fine-tune popup dimensions by dragging the corner resize handle.
+- **Persistent Dimensions**: Your chosen popup size is saved and restored across sessions.
 
 ---
 

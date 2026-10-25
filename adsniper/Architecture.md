@@ -1,6 +1,6 @@
 # AdSniper — Architecture & Knowledge Base
 
-> **Version**: 2.3 (Gemini 3.8) | **Platform**: Chrome Extension (Manifest V3) | **Location**: `TestProject/adsniper/`
+> **Version**: 2.4 (Gemini 3.8) | **Platform**: Chrome Extension (Manifest V3) | **Location**: `TestProject/adsniper/`
 
 ---
 
@@ -63,7 +63,8 @@ It uses **Manifest V3** exclusively. Network blocking is performed natively by C
 │  │                                content/content.js                                │  │
 │  │                                                                                  │  │
 │  │  • Hides elements matching blocked URLs (display:none)                           │  │
-│  │  • Element Picker: overlay + hover guide + click-to-block                        │  │
+│  │  • Element Picker: capture-phase listeners, target container detection           │  │
+│  │    (findTargetContainer), indicator card, keyboard stepping & DOM deletion        │  │
 │  │  • iFrame Ad Blocker: fully removes() ad iframes                                 │  │
 │  │  • Overlay Neutralizer: strips anti-adblock modals, video ads & unlocks scroll   │  │
 │  │  • CSS Selector Hider: injects display:none on custom AI selectors               │  │
@@ -95,6 +96,7 @@ Network request →
         Increments blockCount_{ruleId}
         Sends REMOVE_AD_ELEMENT to content script →
           Content script: findByUrl() → bestContainer() → applyHide() [display:none]
+          (Picker deletion uses findTargetContainer() → applyDelete() [DOM remove])
 ```
 
 ### Gemini Nano On-Device AI & MCP Execution Lifecycle
@@ -148,13 +150,19 @@ GeminiNanoClient.getInstance()
   sendMessage(tabId, START_ELEMENT_PICKER) →
   window.close()  ← popup closes so user can interact
   content.js: startElementPicker() →
-    overlay (z-index 2147483646) captures mouse events
-    hover → red highlight box + tooltip
-    click → findNearestAdUrl() walks ≤8 ancestors
-           → bestContainer() finds ad-named ancestor
-           → applyHide(container)
-           → sendMessage(SW, ADD_BLOCK_RULE { pattern: "||hostname" })
-    Escape → cancel
+    window capture listeners + injected global crosshair cursor (no blocking overlay)
+    hover → findTargetContainer() calculates best enclosing ad container bounding box
+          → red outline highlight + floating indicator card (tag, #id.class, W×H px, domain)
+    keyboard navigation:
+      ↑ / W → expand selection to parent container
+      ↓ / S → narrow selection to child leaf element
+      Enter / Click → delete target
+      Esc → cancel
+    on click / Enter:
+      findNearestAdUrl() extracts domain / ad URL
+      applyDelete(target) physically detaches element from DOM (el.remove())
+      showDeleteToast() displays floating confirmation toast
+      if URL/domain found → sendMessage(SW, ADD_BLOCK_RULE { pattern: "||hostname" })
 ```
 
 ### iFrame Blocker Flow
@@ -249,6 +257,9 @@ adsniper/
 | `appendAstMessage(role, text)` | Creates and appends a styled chat bubble (user/bot/system) to the Assistant history |
 | `handleAstSend()` | Dispatches prompt to `processAssistantPrompt()` with streaming output, token stats, and MCP action handling |
 | `initListsPanel()` | Initializes Scratchpad and Todo List panels, loads from storage, wires event listeners and MCP custom events |
+| `initResize()` | Initializes popup resize system with S/M/L presets and drag-resize handle; restores saved dimensions |
+| `applySize(w, h)` | Applies popup dimensions, highlights active preset button, and saves to storage |
+| `saveDomainToBlocklist(url, btn)` | Extracts & normalizes domain, saves to `savedBlockedDomains` and `adHosts`, registers dynamic DNR rule, and hides matches in active tab |
 
 ### content.js — Key Functions
 
@@ -257,8 +268,11 @@ adsniper/
 | `hideByUrl(url)` | Reactive hide triggered per blocked URL |
 | `scanAndHide()` | Full DOM scan against blockedHosts + blockedPatterns |
 | `bestContainer(el)` | Walks ≤6 DOM levels for ad-named ancestor to hide |
+| `findTargetContainer(startEl)` | Traverses upward from leaf element to find enclosing ad slot, banner, or modal container using heuristics |
 | `applyHide(el)` | `display:none !important` + `data-adsniper-hidden` attr |
-| `startElementPicker()` | Full overlay picker with mouse tracking and click-to-block |
+| `applyDelete(el)` | Physically removes element from the DOM (`el.remove()`) with `display: none` fallback |
+| `showDeleteToast(tagInfo)` | Displays visual confirmation toast after element deletion |
+| `startElementPicker()` | Capture-phase picker with target container detection, indicator card, keyboard navigation, and true DOM deletion |
 | `findNearestAdUrl(el)` | Walks ≤8 ancestors, prefers known-ad URLs |
 | `isAdIframe(iframe)` | 5-check heuristic for ad iframes |
 | `scanAndRemoveAdIframes()` | Snapshots + `iframe.remove()` on matches |
@@ -325,6 +339,9 @@ snipingOpenNewTab      Boolean, whether to open new tab vs reload for game
 astScratchpad          String, persistent scratchpad notepad content
 astTodos               Array<{id, text, done}>, persistent todo list items
 astHistory             Array<{role, content}>, persistent chat history for the AI Personal Assistant
+popupWidth             Integer, saved popup width in pixels (420–800)
+popupHeight            Integer, saved popup height in pixels (400–600)
+savedBlockedDomains    String[] of manually saved ad domains for persistent blocking, merged with adHosts
 ```
 
 ### Critical Constraints
@@ -335,7 +352,7 @@ astHistory             Array<{role, content}>, persistent chat history for the A
 4. **Service worker has no persistent memory** — it can be killed between events. All state must live in `chrome.storage.local`.
 5. **`onRuleMatchedDebug` is dev-mode only** — only fires for unpacked extensions with `declarativeNetRequestFeedback` permission.
 6. **Cookie lock loop prevention** — `cookies.onChanged` checks `cookie.value === locked.value` before restoring.
-7. **DOM hide vs delete** — DOM Cleanup and element picker use `display:none` (reversible on reload). iFrame Blocker uses `iframe.remove()` (permanent for that page session).
+7. **DOM hide vs delete** — DOM Cleanup uses `display:none` (reversible on reload). Element Picker uses `applyDelete()` (permanent DOM removal via `el.remove()`). iFrame Blocker uses `iframe.remove()` (permanent for that page session).
 8. **On-device AI VRAM reclamation** — Chrome sessions allocate GPU memory. Always call `destroy()` when popup closes or AI is disabled.
 
 ---
@@ -717,7 +734,7 @@ window.addEventListener('AST_SCRATCHPAD_UPDATE', (e) => {
 
 ### Lists Tab (Scratchpad & Todo)
 
-The Lists tab provides persistent user-facing data storage accessible from both manual input and AI-driven writes.
+The Lists tab provides persistent user-facing data storage accessible from both manual input and AI-driven writes, arranged vertically with the **Todo List** on the top half (`#lists-todo-half`) and the **Scratchpad** on the bottom half (`#lists-scratchpad-half`) for optimal daily task visibility.
 
 #### Storage Schema
 ```
