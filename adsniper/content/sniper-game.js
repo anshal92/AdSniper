@@ -144,6 +144,89 @@ window.AdSniperGame = (() => {
   let redBirdProximity = new Map();
 
   // ═══════════════════════════════════════════════
+  //  STAGE 2: BOSS FIGHT & GUN SELECTION STATE
+  // ═══════════════════════════════════════════════
+  const STAGE2_GUNS = [
+    {
+      id: 'pistol',
+      name: '🔫 Tactical Pistol',
+      shortName: 'PISTOL',
+      damage: 1,
+      fireRateMs: 300,
+      requiredScore: 0,
+      color: '#00e5ff',
+      desc: 'Rapid single-shot precision. Fast & agile.',
+    },
+    {
+      id: 'shotgun',
+      name: '🔥 Flame Shotgun',
+      shortName: 'SHOTGUN',
+      damage: 3,
+      fireRateMs: 900,
+      requiredScore: 150,
+      color: '#ff6d00',
+      desc: '3-pellet incendiary spread cone. Heavy impact.',
+    },
+    {
+      id: 'railgun',
+      name: '⚡ Hyper Railgun',
+      shortName: 'RAILGUN',
+      damage: 5,
+      fireRateMs: 1500,
+      requiredScore: 300,
+      color: '#e040fb',
+      desc: 'Piercing high-energy beam. Maximum penetration.',
+    },
+    {
+      id: 'sniper',
+      name: '🎯 Heavy Sniper',
+      shortName: 'SNIPER',
+      damage: 10,
+      headshotDamage: 20,
+      fireRateMs: 1800,
+      requiredScore: 450,
+      color: '#34d399',
+      desc: '10 DMG base. CRITICAL HEADSHOT deals DOUBLE (20 DMG)!',
+    },
+  ];
+  let currentStage = 1;
+  let stage1Score = 0;
+  let stage1BirdsHit = 0;
+  let stage1TotalBirds = 0;
+  let stageClearTimer = 0;
+  let selectedGun = STAGE2_GUNS[0];
+  let gunCardsBounds = [];
+  let gunCooldownTimer = 0;
+
+  // Boss state
+  let totalAdsFound = 5;
+  let bossMaxHP = 50;
+  let bossHP = 50;
+  let bossSmoothHP = 50;
+  let bossX = 0;
+  let bossY = 0;
+  let bossVx = 4.8; // Base horizontal flight speed (+50% boosted from 3.2)
+  let bossSize = 220;
+  let bossState = 'PATROL'; // PATROL | BITING | STUNNED | ENRAGED | DYING
+  const BOSS_PARRY_WINDOW_MS = 1000; // 1.0 second parry window
+  let biteTimer = 0; // ms remaining in parry window
+  let biteCooldown = 0; // frames until next bite attempt
+  let stunTimer = 0; // frames remaining stunned
+  let bossWingPhase = 0;
+  let bossIntroProgress = 0;
+  let bossDefeated = false;
+  let bossDeathTimer = 0;
+  let parriesLanded = 0;
+  let bossDamageTaken = 0;
+  let bossBiteDamage = 1; // Doubles (+100%) on every user hit
+  let bossLungeStartX = 0;
+  let bossLungeStartY = 0;
+  let bossLungeTargetX = 0;
+  let bossLungeTargetY = 0;
+  let railgunBeam = null;
+  let sniperTracer = null;
+
+  // ═══════════════════════════════════════════════
   //  COVERING OVERLAY & POPUP PURGER
   // ═══════════════════════════════════════════════
   let popupObserver = null;
@@ -1508,13 +1591,252 @@ window.AdSniperGame = (() => {
           });
           // Check if all birds done
           if (birds.every(b => !b.alive)) {
-            gameState = 'GAME_OVER';
-            gameOverAlpha = 0;
+            if (currentStage === 1) {
+              onStage1Complete();
+            } else {
+              gameState = 'GAME_OVER';
+              gameOverAlpha = 0;
+            }
           }
         }
       } else {
         redBirdProximity.delete(bird.id);
       }
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  //  STAGE 2: BOSS FIGHT ENGINE
+  // ═══════════════════════════════════════════════
+
+  function initBossFight() {
+    currentStage = 2;
+    bossMaxHP = 50 + (totalAdsFound * 2);
+    bossHP = bossMaxHP;
+    bossSmoothHP = bossMaxHP;
+    bossBiteDamage = 1;
+    const vw = canvas ? canvas.width : window.innerWidth;
+    const vh = canvas ? canvas.height : window.innerHeight;
+    bossX = vw / 2;
+    bossY = -150;
+    bossVx = 4.8; // +50% speed increase (boosted from 3.2)
+    bossSize = Math.max(180, Math.min(vw, vh) * 0.28);
+    bossState = 'PATROL';
+    biteTimer = 0;
+    biteCooldown = 220; // ~3.6s initial grace
+    stunTimer = 0;
+    bossWingPhase = 0;
+    bossIntroProgress = 0;
+    bossDefeated = false;
+    bossDeathTimer = 0;
+    parriesLanded = 0;
+    bossDamageTaken = 0;
+    gunCooldownTimer = 0;
+    sniperTracer = null;
+  }
+
+  function updateBossIntro(dt = 1) {
+    bossIntroProgress = Math.min(1, bossIntroProgress + 0.012 * dt);
+    const vh = canvas ? canvas.height : window.innerHeight;
+    const vw = canvas ? canvas.width : window.innerWidth;
+    const targetY = vh * 0.32;
+    bossY = -150 + (targetY + 150) * Math.sin((bossIntroProgress * Math.PI) / 2);
+    bossX = vw / 2 + Math.sin(bossIntroProgress * Math.PI * 2) * 50;
+    bossWingPhase += 0.16 * dt;
+
+    if (bossIntroProgress >= 1) {
+      gameState = 'BOSS_FIGHT';
+      bossState = 'PATROL';
+      biteCooldown = 180;
+    }
+  }
+
+  function updateBoss(dt = 1) {
+    const vw = canvas ? canvas.width : window.innerWidth;
+    const vh = canvas ? canvas.height : window.innerHeight;
+
+    // Smooth health bar interpolation
+    bossSmoothHP += (bossHP - bossSmoothHP) * 0.1 * dt;
+
+    // Wing flap animation (tuned for +50% flight speed)
+    const wingSpeed = bossState === 'BITING' ? 0.45 : bossState === 'ENRAGED' ? 0.32 : 0.20;
+    bossWingPhase += wingSpeed * dt;
+
+    // Update railgun beam visual if active
+    if (railgunBeam) {
+      railgunBeam.timer -= dt;
+      if (railgunBeam.timer <= 0) railgunBeam = null;
+    }
+
+    // Update sniper supersonic tracer visual if active
+    if (sniperTracer) {
+      sniperTracer.timer -= dt;
+      if (sniperTracer.timer <= 0) sniperTracer = null;
+    }
+
+    if (bossState === 'DYING') {
+      bossDeathTimer -= dt;
+      triggerScreenShake(7);
+      if (Math.random() < 0.35) {
+        spawnBossHitParticles(
+          bossX + (Math.random() - 0.5) * bossSize,
+          bossY + (Math.random() - 0.5) * bossSize,
+          FIREWORK_COLORS[Math.floor(Math.random() * FIREWORK_COLORS.length)]
+        );
+      }
+      if (bossDeathTimer <= 0) {
+        bossDefeated = true;
+        score += 1500;
+        gameState = 'GAME_OVER';
+        gameOverAlpha = 0;
+      }
+      return;
+    }
+
+    if (bossState === 'PATROL') {
+      bossX += bossVx * dt;
+      bossY = vh * 0.32 + Math.sin(frameCount * 0.05) * 45;
+
+      const halfW = bossSize * 0.6;
+      if (bossX > vw - halfW) {
+        bossVx = -Math.abs(bossVx);
+      } else if (bossX < halfW) {
+        bossVx = Math.abs(bossVx);
+      }
+
+      // Check enrage threshold (HP <= 25%)
+      if (bossHP <= bossMaxHP * 0.25) {
+        bossState = 'ENRAGED';
+      }
+
+      // Decrement bite cooldown
+      biteCooldown -= dt;
+      if (biteCooldown <= 0) {
+        startBossBite(vw, vh);
+      }
+    } else if (bossState === 'ENRAGED') {
+      // Faster, more aggressive erratic motion
+      bossX += (bossVx * 1.5 + Math.sin(frameCount * 0.12) * 4.5) * dt;
+      bossY = vh * 0.34 + Math.sin(frameCount * 0.1) * 70;
+
+      const halfW = bossSize * 0.6;
+      if (bossX > vw - halfW) {
+        bossVx = -Math.abs(bossVx) * (1.1 + Math.random() * 0.2);
+      } else if (bossX < halfW) {
+        bossVx = Math.abs(bossVx) * (1.1 + Math.random() * 0.2);
+      }
+
+      biteCooldown -= dt;
+      if (biteCooldown <= 0) {
+        startBossBite(vw, vh);
+      }
+    } else if (bossState === 'BITING') {
+      // 1000ms bite window (1.0s parry window)
+      biteTimer -= dt * (1000 / 60);
+
+      // Lunge motion toward center of screen
+      const lungeProgress = 1 - Math.max(0, biteTimer / BOSS_PARRY_WINDOW_MS);
+      const lungeArc = Math.sin(lungeProgress * Math.PI);
+      bossX = bossLungeStartX + (bossLungeTargetX - bossLungeStartX) * lungeArc;
+      bossY = bossLungeStartY + (bossLungeTargetY - bossLungeStartY) * lungeArc;
+
+      if (biteTimer <= 0) {
+        // Bite connects: player failed to parry in time
+        const dmgDealt = bossBiteDamage;
+        takeDamage(dmgDealt);
+        bossDamageTaken += dmgDealt;
+        bossX = bossLungeStartX;
+        bossY = bossLungeStartY;
+        bossState = bossHP <= bossMaxHP * 0.25 ? 'ENRAGED' : 'PATROL';
+        biteCooldown = bossHP <= bossMaxHP * 0.25 ? 130 : 220;
+        triggerScreenShake(14);
+
+        // Increase the damage of the Boss on every user hit by 100%
+        const prevDmg = bossBiteDamage;
+        bossBiteDamage = bossBiteDamage * 2;
+
+        particles.push({
+          x: vw / 2,
+          y: vh / 2,
+          vx: 0,
+          vy: -1.5,
+          life: 75,
+          maxLife: 75,
+          isText: true,
+          text: `💥 BOSS BITE! (-${dmgDealt} HP) [Next: ${bossBiteDamage} DMG! (+100%)]`,
+          color: COLOR_RED,
+          size: 0,
+        });
+      }
+    } else if (bossState === 'STUNNED') {
+      stunTimer -= dt;
+      // Dizzy shake
+      bossX += (Math.random() - 0.5) * 2;
+      bossY += (Math.random() - 0.5) * 1.5;
+
+      if (stunTimer <= 0) {
+        bossState = bossHP <= bossMaxHP * 0.25 ? 'ENRAGED' : 'PATROL';
+        biteCooldown = 180 + Math.random() * 60;
+      }
+    }
+  }
+
+  function startBossBite(vw, vh) {
+    bossState = 'BITING';
+    biteTimer = BOSS_PARRY_WINDOW_MS; // Exactly 1 second parry window
+    bossLungeStartX = bossX;
+    bossLungeStartY = bossY;
+    bossLungeTargetX = vw / 2;
+    bossLungeTargetY = vh * 0.55;
+    triggerScreenShake(4);
+
+    particles.push({
+      x: vw / 2,
+      y: 90,
+      vx: 0,
+      vy: -1.0,
+      life: 55,
+      maxLife: 55,
+      isText: true,
+      text: '⚠️ BITE INCOMING — SHOOT TO PARRY! (1.0s)',
+      color: '#ef4444',
+      size: 0,
+    });
+  }
+
+  function spawnBossHitParticles(x, y, color) {
+    for (let i = 0; i < 14; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2 + Math.random() * 5;
+      particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 30 + Math.random() * 20,
+        maxLife: 50,
+        color,
+        size: 3 + Math.random() * 4,
+        isText: false,
+      });
+    }
+  }
+
+  function spawnParrySparks(x, y) {
+    for (let i = 0; i < 22; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 4 + Math.random() * 7;
+      particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 40 + Math.random() * 20,
+        maxLife: 60,
+        color: i % 2 === 0 ? '#fbbf24' : '#ffffff',
+        size: 4 + Math.random() * 3,
+        isText: false,
+      });
     }
   }
 
@@ -1605,15 +1927,40 @@ window.AdSniperGame = (() => {
     triggerScreenShake(currentWeapon === 'magnum' ? 8 : currentWeapon === 'shotgun' ? 6 : 3);
     muzzleFlashTimer = 4;
 
-    // Check game over (victory)
+    // Check victory
     if (birds.every(b => !b.alive)) {
-      gameState = 'GAME_OVER';
-      gameOverAlpha = 0;
+      if (currentStage === 1) {
+        onStage1Complete();
+      } else {
+        gameState = 'GAME_OVER';
+        gameOverAlpha = 0;
+      }
     }
   }
 
   function handleMiss() {
     combo = 0;
+  }
+
+  function onStage1Complete() {
+    currentStage = 1;
+    stage1Score = score;
+    stage1BirdsHit = birdsHit;
+    stage1TotalBirds = totalBirds;
+    gameState = 'STAGE_CLEAR';
+    stageClearTimer = 180;
+    particles.push({
+      x: canvas ? canvas.width / 2 : 400,
+      y: (canvas ? canvas.height / 2 : 300) - 80,
+      vx: 0,
+      vy: -1.0,
+      life: 90,
+      maxLife: 90,
+      isText: true,
+      text: '🏆 STAGE 1 CLEARED!',
+      color: '#fbbf24',
+      size: 0,
+    });
   }
 
   // ═══════════════════════════════════════════════
@@ -1635,60 +1982,951 @@ window.AdSniperGame = (() => {
     // Animated gradient sky background + stars
     renderSky(vw, vh);
 
-    // Render clouds behind birds
+    // Render clouds behind birds/boss
     renderClouds();
 
-    if (gameState === 'PLAYING' || gameState === 'GAME_OVER') {
+    if (gameState === 'PLAYING') {
       // Draw birds
       for (const bird of birds) {
         if (!bird.alive) continue;
         renderBird(bird);
       }
-
-      // Damage flash vignette
-      if (damageFlashTimer > 0) {
-        const flashAlpha = (damageFlashTimer / DAMAGE_FLASH_FRAMES) * 0.4;
-        const vigGrad = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.3, vw / 2, vh / 2, vh * 0.8);
-        vigGrad.addColorStop(0, 'rgba(248, 113, 113, 0)');
-        vigGrad.addColorStop(1, `rgba(248, 113, 113, ${flashAlpha})`);
-        ctx.fillStyle = vigGrad;
-        ctx.fillRect(0, 0, vw, vh);
-        damageFlashTimer--;
-      }
-
-      // Draw particles
+      renderDamageFlash(vw, vh);
       renderParticles();
-
-      // Muzzle flash cone
-      if (muzzleFlashTimer > 0) {
-        const mfAlpha = (muzzleFlashTimer / 4) * 0.5;
-        ctx.globalAlpha = mfAlpha;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(mouseX, mouseY, 18 * (muzzleFlashTimer / 4), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = currentWeapon === 'magnum' ? '#f87171' :
-                        currentWeapon === 'shotgun' ? '#fb923c' : COLOR_GREEN;
-        ctx.beginPath();
-        ctx.arc(mouseX, mouseY, 10 * (muzzleFlashTimer / 4), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        muzzleFlashTimer--;
-      }
-
-      // Draw HUD
+      renderMuzzleFlashCone();
       renderHUD(vw, vh);
+      renderCrosshair();
+    } else if (gameState === 'STAGE_CLEAR') {
+      renderDamageFlash(vw, vh);
+      renderParticles();
+      renderStageClear(vw, vh, dt);
+    } else if (gameState === 'GUN_SELECT') {
+      renderParticles();
+      renderGunSelect(vw, vh);
+    } else if (gameState === 'BOSS_INTRO') {
+      renderBoss(dt);
+      renderParticles();
+      renderBossIntro(vw, vh, dt);
+    } else if (gameState === 'BOSS_FIGHT') {
+      renderBoss(dt);
+      renderDamageFlash(vw, vh);
+      renderParticles();
+      renderRailgunBeam();
+      renderSniperTracer();
+      renderMuzzleFlashCone();
+      renderBossHUD(vw, vh);
+      renderBossCrosshair();
+    } else if (gameState === 'GAME_OVER') {
+      if (currentStage === 1) {
+        for (const bird of birds) {
+          if (!bird.alive) continue;
+          renderBird(bird);
+        }
+      } else {
+        renderBoss(dt);
+      }
+      renderParticles();
+      renderGameOver(vw, vh, dt);
+    }
+  }
 
-      // Draw crosshair
-      if (gameState === 'PLAYING') {
-        renderCrosshair();
+  function renderDamageFlash(vw, vh) {
+    if (damageFlashTimer > 0) {
+      const flashAlpha = (damageFlashTimer / DAMAGE_FLASH_FRAMES) * 0.45;
+      const vigGrad = ctx.createRadialGradient(vw / 2, vh / 2, vh * 0.25, vw / 2, vh / 2, vh * 0.85);
+      vigGrad.addColorStop(0, 'rgba(248, 113, 113, 0)');
+      vigGrad.addColorStop(1, `rgba(248, 113, 113, ${flashAlpha})`);
+      ctx.fillStyle = vigGrad;
+      ctx.fillRect(0, 0, vw, vh);
+      damageFlashTimer--;
+    }
+  }
+
+  function renderMuzzleFlashCone() {
+    if (muzzleFlashTimer > 0) {
+      const mfAlpha = (muzzleFlashTimer / 4) * 0.55;
+      ctx.globalAlpha = mfAlpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(mouseX, mouseY, 18 * (muzzleFlashTimer / 4), 0, Math.PI * 2);
+      ctx.fill();
+      const flashColor = currentStage === 2 && selectedGun
+        ? selectedGun.color
+        : currentWeapon === 'magnum' ? '#f87171' : currentWeapon === 'shotgun' ? '#fb923c' : COLOR_GREEN;
+      ctx.fillStyle = flashColor;
+      ctx.beginPath();
+      ctx.arc(mouseX, mouseY, 10 * (muzzleFlashTimer / 4), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      muzzleFlashTimer--;
+    }
+  }
+
+  function renderRailgunBeam() {
+    if (!railgunBeam) return;
+    ctx.save();
+    const alpha = Math.max(0, railgunBeam.timer / 12);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#e040fb';
+    ctx.lineWidth = 14;
+    ctx.shadowColor = '#e040fb';
+    ctx.shadowBlur = 24;
+    ctx.beginPath();
+    ctx.moveTo(railgunBeam.startX, railgunBeam.startY);
+    ctx.lineTo(railgunBeam.endX, railgunBeam.endY);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.moveTo(railgunBeam.startX, railgunBeam.startY);
+    ctx.lineTo(railgunBeam.endX, railgunBeam.endY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function renderSniperTracer() {
+    if (!sniperTracer) return;
+    ctx.save();
+    const alpha = Math.max(0, sniperTracer.timer / 10);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#34d399';
+    ctx.lineWidth = 4;
+    ctx.shadowColor = '#34d399';
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.moveTo(sniperTracer.startX, sniperTracer.startY);
+    ctx.lineTo(sniperTracer.endX, sniperTracer.endY);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sniperTracer.startX, sniperTracer.startY);
+    ctx.lineTo(sniperTracer.endX, sniperTracer.endY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function renderStageClear(vw, vh, dt = 1) {
+    const cx = vw / 2;
+    const cy = vh / 2;
+
+    ctx.fillStyle = 'rgba(12, 12, 22, 0.75)';
+    ctx.fillRect(0, 0, vw, vh);
+
+    const cardW = 540;
+    const cardH = 340;
+
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+    ctx.shadowBlur = 32;
+    ctx.shadowOffsetY = 8;
+
+    ctx.fillStyle = COLOR_HUD_BG;
+    roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 18);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2.5;
+    roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 18);
+    ctx.stroke();
+
+    const topGrad = ctx.createLinearGradient(cx - cardW / 2, 0, cx + cardW / 2, 0);
+    topGrad.addColorStop(0, 'rgba(251, 191, 36, 0)');
+    topGrad.addColorStop(0.5, 'rgba(251, 191, 36, 0.15)');
+    topGrad.addColorStop(1, 'rgba(251, 191, 36, 0)');
+    ctx.fillStyle = topGrad;
+    roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, 55, 18);
+    ctx.fill();
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = `bold 26px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🏆 STAGE 1 CLEARED!', cx, cy - 110);
+
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.font = `14px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`All ${stage1BirdsHit} Ad Targets Vaporized!`, cx, cy - 70);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+    roundRect(ctx, cx - 210, cy - 45, 420, 60, 10);
+    ctx.fill();
+
+    ctx.font = `bold 18px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.fillText(`Accumulated Points: ${score.toLocaleString()} PTS`, cx, cy - 15);
+
+    ctx.fillStyle = '#f87171';
+    ctx.font = `bold 14px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('⚠️ BOSS ENCOUNTER AHEAD: GOOGLE ANALYTICS', cx, cy + 45);
+
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `12px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('Unlocking weapon selection for boss battle...', cx, cy + 70);
+
+    const pulse = 0.6 + Math.sin(frameCount * 0.1) * 0.4;
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('[ Click anywhere to proceed to Armory ]', cx, cy + 115);
+    ctx.globalAlpha = 1;
+  }
+
+  function renderGunSelect(vw, vh) {
+    const cx = vw / 2;
+    const cy = vh / 2;
+
+    ctx.fillStyle = 'rgba(10, 10, 20, 0.85)';
+    ctx.fillRect(0, 0, vw, vh);
+
+    ctx.shadowColor = '#fbbf24';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = `bold 28px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⚔️ CHOOSE YOUR WEAPON FOR STAGE 2 ⚔️', cx, cy - 220);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.font = `14px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('Equip a weapon to battle Google Analytics based on your Stage 1 points:', cx, cy - 182);
+
+    const scorePillW = 260;
+    const scorePillH = 28;
+    ctx.fillStyle = 'rgba(52, 211, 153, 0.12)';
+    roundRect(ctx, cx - scorePillW / 2, cy - 162, scorePillW, scorePillH, 14);
+    ctx.fill();
+    ctx.strokeStyle = COLOR_GREEN;
+    ctx.lineWidth = 1;
+    roundRect(ctx, cx - scorePillW / 2, cy - 162, scorePillW, scorePillH, 14);
+    ctx.stroke();
+
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`Accumulated Score: ${score.toLocaleString()} PTS`, cx, cy - 148);
+
+    const numGuns = STAGE2_GUNS.length;
+    const cardW = Math.min(210, Math.max(175, Math.floor((vw - 80) / numGuns)));
+    const cardH = 340;
+    const gap = 16;
+    const totalW = numGuns * cardW + (numGuns - 1) * gap;
+    const startX = cx - totalW / 2;
+    const cardY = cy - 110;
+
+    gunCardsBounds = [];
+    let hoveredUnlocked = false;
+
+    for (let i = 0; i < STAGE2_GUNS.length; i++) {
+      const gun = STAGE2_GUNS[i];
+      const cardX = startX + i * (cardW + gap);
+      const isUnlocked = score >= gun.requiredScore;
+
+      gunCardsBounds.push({
+        x: cardX,
+        y: cardY,
+        w: cardW,
+        h: cardH,
+        gun,
+        unlocked: isUnlocked,
+      });
+
+      const isHover = mouseX >= cardX && mouseX <= cardX + cardW &&
+                      mouseY >= cardY && mouseY <= cardY + cardH;
+
+      if (isHover && isUnlocked) {
+        hoveredUnlocked = true;
       }
 
-      // Game over overlay
-      if (gameState === 'GAME_OVER') {
-        renderGameOver(vw, vh, dt);
+      ctx.shadowColor = isHover && isUnlocked ? gun.color : 'rgba(0, 0, 0, 0.5)';
+      ctx.shadowBlur = isHover && isUnlocked ? 22 : 14;
+      ctx.shadowOffsetY = 6;
+
+      ctx.fillStyle = isUnlocked
+        ? (isHover ? 'rgba(28, 28, 48, 0.95)' : 'rgba(20, 20, 36, 0.88)')
+        : 'rgba(16, 16, 24, 0.7)';
+      roundRect(ctx, cardX, cardY, cardW, cardH, 14);
+      ctx.fill();
+
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+
+      ctx.strokeStyle = isUnlocked
+        ? (isHover ? gun.color : 'rgba(255, 255, 255, 0.18)')
+        : 'rgba(239, 68, 68, 0.3)';
+      ctx.lineWidth = isHover && isUnlocked ? 2.5 : 1.5;
+      roundRect(ctx, cardX, cardY, cardW, cardH, 14);
+      ctx.stroke();
+
+      ctx.fillStyle = isUnlocked ? gun.color : 'rgba(239, 68, 68, 0.4)';
+      roundRect(ctx, cardX, cardY, cardW, 6, 4);
+      ctx.fill();
+
+      ctx.fillStyle = isUnlocked ? '#ffffff' : COLOR_MUTED;
+      ctx.font = `bold 15px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(gun.name, cardX + cardW / 2, cardY + 36);
+
+      ctx.fillStyle = isUnlocked ? gun.color : 'rgba(255, 255, 255, 0.1)';
+      ctx.fillRect(cardX + 16, cardY + 52, cardW - 32, 1.5);
+
+      ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.textAlign = 'left';
+      ctx.fillText('Damage / Shot:', cardX + 16, cardY + 78);
+
+      ctx.textAlign = 'right';
+      ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = isUnlocked ? gun.color : COLOR_MUTED;
+      const dmgLabel = gun.id === 'sniper' ? '10 (20 HS)' : `${gun.damage} DMG`;
+      ctx.fillText(dmgLabel, cardX + cardW - 16, cardY + 78);
+
+      const maxPipSlots = 5;
+      const pipW = Math.floor((cardW - 32 - (maxPipSlots - 1) * 4) / maxPipSlots);
+      for (let p = 0; p < maxPipSlots; p++) {
+        const pipH = 5;
+        const pipX = cardX + 16 + p * (pipW + 4);
+        const pipY = cardY + 88;
+        const filled = gun.id === 'sniper' ? true : p < gun.damage;
+        ctx.fillStyle = filled
+          ? (isUnlocked ? gun.color : 'rgba(255, 255, 255, 0.2)')
+          : 'rgba(255, 255, 255, 0.08)';
+        roundRect(ctx, pipX, pipY, pipW, pipH, 2);
+        ctx.fill();
+      }
+
+      ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.textAlign = 'left';
+      ctx.fillText('Cycle Rate:', cardX + 16, cardY + 116);
+
+      ctx.textAlign = 'right';
+      ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = isUnlocked ? '#38bdf8' : COLOR_MUTED;
+      const speedLabel = gun.id === 'pistol' ? '300ms (RAPID)' : gun.id === 'shotgun' ? '900ms (SPREAD)' : gun.id === 'railgun' ? '1500ms (BEAM)' : '1800ms (SNIPER)';
+      ctx.fillText(speedLabel, cardX + cardW - 16, cardY + 116);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      roundRect(ctx, cardX + 12, cardY + 134, cardW - 24, 80, 8);
+      ctx.fill();
+
+      ctx.fillStyle = isUnlocked ? COLOR_TEXT : COLOR_MUTED;
+      ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      wrapText(ctx, gun.desc, cardX + cardW / 2, cardY + 158, cardW - 30, 16);
+
+      const btnW = cardW - 28;
+      const btnH = 36;
+      const btnX = cardX + 14;
+      const btnY = cardY + cardH - 48;
+
+      if (isUnlocked) {
+        const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+        btnGrad.addColorStop(0, isHover ? gun.color : 'rgba(255, 255, 255, 0.12)');
+        btnGrad.addColorStop(1, isHover ? gun.color : 'rgba(255, 255, 255, 0.05)');
+        ctx.fillStyle = btnGrad;
+        roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+        ctx.fill();
+
+        ctx.strokeStyle = gun.color;
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+        ctx.stroke();
+
+        ctx.fillStyle = isHover ? '#000000' : '#ffffff';
+        ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('SELECT WEAPON', btnX + btnW / 2, btnY + btnH / 2);
+      } else {
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
+        roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, btnX, btnY, btnW, btnH, 8);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ef4444';
+        ctx.font = `bold 10px 'Segoe UI', system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`🔒 LOCKED (${gun.requiredScore} PTS)`, btnX + btnW / 2, btnY + btnH / 2);
       }
     }
+
+    if (canvas) {
+      canvas.style.cursor = hoveredUnlocked ? 'pointer' : 'default';
+    }
+
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `12px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Click any unlocked weapon card to begin the boss battle', cx, cy + 245);
+  }
+
+  function wrapText(context, text, x, y, maxWidth, lineHeight) {
+    const words = text.split(' ');
+    let line = '';
+    let currY = y;
+
+    for (let n = 0; n < words.length; n++) {
+      const testLine = line + words[n] + ' ';
+      const metrics = context.measureText(testLine);
+      const testWidth = metrics.width;
+      if (testWidth > maxWidth && n > 0) {
+        context.fillText(line.trim(), x, currY);
+        line = words[n] + ' ';
+        currY += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+    context.fillText(line.trim(), x, currY);
+  }
+
+  function renderBossIntro(vw, vh, dt = 1) {
+    const cx = vw / 2;
+    const cy = vh / 2;
+
+    const barH = 34;
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(0, 0, vw, barH);
+    ctx.fillStyle = '#991b1b';
+    ctx.fillRect(0, vh - barH, vw, barH);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold 14px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⚠️ WARNING: HIGH-LEVEL TELEMETRY ENTITY DETECTED ⚠️', cx, barH / 2);
+    ctx.fillText('⚠️ BITE ATTACK INCOMING: SHOOT DURING 1s BITE TO PARRY ⚠️', cx, vh - barH / 2);
+
+    ctx.shadowColor = '#ea580c';
+    ctx.shadowBlur = 24;
+    ctx.fillStyle = '#ea580c';
+    ctx.font = `bold 32px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('GOOGLE ANALYTICS', cx, cy + 80);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.font = `16px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`Health Source: 50 Base HP + (${totalAdsFound} Ads × 2) = ${bossMaxHP} HP`, cx, cy + 118);
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = `bold 14px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`Equipped: ${selectedGun.name}`, cx, cy + 146);
+
+    const pulse = 0.5 + Math.sin(frameCount * 0.12) * 0.5;
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `13px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText('[ Click anywhere to skip intro and engage ]', cx, cy + 180);
+    ctx.globalAlpha = 1;
+  }
+
+  function renderBoss(dt = 1) {
+    ctx.save();
+    ctx.translate(bossX, bossY);
+
+    let scale = 1.0;
+    if (bossState === 'BITING') {
+      const lungeProg = 1 - Math.max(0, biteTimer / BOSS_PARRY_WINDOW_MS);
+      scale = 1.0 + Math.sin(lungeProg * Math.PI) * 0.45;
+    } else if (bossState === 'STUNNED') {
+      scale = 0.94 + Math.sin(frameCount * 0.2) * 0.03;
+    }
+    ctx.scale(scale, scale);
+
+    const s = bossSize;
+
+    if (bossState === 'ENRAGED' || bossState === 'BITING') {
+      const auraAlpha = 0.25 + Math.sin(frameCount * 0.15) * 0.15;
+      ctx.fillStyle = `rgba(239, 68, 68, ${auraAlpha})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.72, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const wingFlap = Math.sin(bossWingPhase) * 0.55;
+    const wingW = s * 0.65;
+    const wingH = s * 0.38;
+
+    // Left Wing
+    ctx.save();
+    ctx.translate(-s * 0.22, -s * 0.05);
+    ctx.rotate(-0.45 + wingFlap);
+    const leftWingGrad = ctx.createLinearGradient(-wingW, -wingH, 0, 0);
+    leftWingGrad.addColorStop(0, '#f97316');
+    leftWingGrad.addColorStop(0.5, '#ea580c');
+    leftWingGrad.addColorStop(1, '#1e293b');
+    ctx.fillStyle = leftWingGrad;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-wingW * 0.6, -wingH * 0.9);
+    ctx.lineTo(-wingW, -wingH * 0.3);
+    ctx.lineTo(-wingW * 0.8, wingH * 0.4);
+    ctx.lineTo(-wingW * 0.3, wingH * 0.5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // Right Wing
+    ctx.save();
+    ctx.translate(s * 0.22, -s * 0.05);
+    ctx.rotate(0.45 - wingFlap);
+    const rightWingGrad = ctx.createLinearGradient(0, 0, wingW, -wingH);
+    rightWingGrad.addColorStop(0, '#1e293b');
+    rightWingGrad.addColorStop(0.5, '#ea580c');
+    rightWingGrad.addColorStop(1, '#f97316');
+    ctx.fillStyle = rightWingGrad;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(wingW * 0.6, -wingH * 0.9);
+    ctx.lineTo(wingW, -wingH * 0.3);
+    ctx.lineTo(wingW * 0.8, wingH * 0.4);
+    ctx.lineTo(wingW * 0.3, wingH * 0.5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // Tail (Google Analytics 3-Bar Chart Feathers)
+    const tailY = s * 0.35;
+    const barWidth = 14;
+    const barHeights = [28, 44, 60];
+    const barColors = ['#fde047', '#f97316', '#38bdf8'];
+    for (let b = 0; b < 3; b++) {
+      const bx = -22 + b * 22;
+      const bh = barHeights[b];
+      ctx.fillStyle = barColors[b];
+      roundRect(ctx, bx - barWidth / 2, tailY, barWidth, bh, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      roundRect(ctx, bx - barWidth / 2, tailY, barWidth, bh, 4);
+      ctx.stroke();
+    }
+
+    // Body
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 6;
+
+    const bodyGrad = ctx.createRadialGradient(0, 0, s * 0.05, 0, 0, s * 0.42);
+    bodyGrad.addColorStop(0, '#f97316');
+    bodyGrad.addColorStop(0.4, '#ea580c');
+    bodyGrad.addColorStop(0.85, '#0f172a');
+    bodyGrad.addColorStop(1, '#020617');
+
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 0.36, s * 0.44, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = bossState === 'ENRAGED' ? '#ef4444' : '#f59e0b';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Chestplate
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+    roundRect(ctx, -s * 0.18, -s * 0.12, s * 0.36, s * 0.26, 8);
+    ctx.fill();
+
+    const emblemH = [16, 26, 36];
+    const emblemW = 8;
+    for (let eb = 0; eb < 3; eb++) {
+      const ebx = -16 + eb * 16;
+      const ebh = emblemH[eb];
+      ctx.fillStyle = barColors[eb];
+      roundRect(ctx, ebx - emblemW / 2, s * 0.1 - ebh, emblemW, ebh, 3);
+      ctx.fill();
+    }
+
+    // Head
+    const headY = -s * 0.32;
+
+    // Spiky evil crest protruding from back of skull
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2;
+    const hornAngles = [-0.35, 0, 0.35];
+    const hornLengths = [s * 0.18, s * 0.25, s * 0.18];
+    for (let h = 0; h < 3; h++) {
+      ctx.save();
+      ctx.translate(0, headY);
+      ctx.rotate(hornAngles[h]);
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.05, 0);
+      ctx.lineTo(0, -hornLengths[h]);
+      ctx.lineTo(s * 0.05, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.fillStyle = '#090d16';
+    ctx.beginPath();
+    ctx.ellipse(0, headY, s * 0.23, s * 0.21, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // Demonic Evil Eye
+    const eyeX = 0;
+    const eyeY = headY - 4;
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(eyeX, eyeY, 11, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sinister vertical slit pupil
+    ctx.fillStyle = '#fde047';
+    ctx.beginPath();
+    ctx.ellipse(eyeX, eyeY, 3, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(eyeX, eyeY, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    // Beak & Wicked Evil Fangs
+    const beakY = headY + 16;
+    if (bossState === 'BITING') {
+      // Jaws wide open with sharp jagged serrated fangs
+      ctx.fillStyle = '#991b1b';
+      ctx.beginPath();
+      ctx.moveTo(-18, beakY);
+      ctx.lineTo(0, beakY + 34);
+      ctx.lineTo(18, beakY);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#7f1d1d';
+      ctx.beginPath();
+      ctx.moveTo(-16, beakY + 14);
+      ctx.lineTo(0, beakY + 52);
+      ctx.lineTo(16, beakY + 14);
+      ctx.closePath();
+      ctx.fill();
+
+      // Sharp upper fangs
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1;
+      const upperFangX = [-12, -4, 4, 12];
+      for (const fx of upperFangX) {
+        ctx.beginPath();
+        ctx.moveTo(fx - 3, beakY + 8);
+        ctx.lineTo(fx, beakY + 28);
+        ctx.lineTo(fx + 3, beakY + 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Sharp lower fangs pointing UP
+      const lowerFangX = [-8, 0, 8];
+      for (const fx of lowerFangX) {
+        ctx.beginPath();
+        ctx.moveTo(fx - 3, beakY + 48);
+        ctx.lineTo(fx, beakY + 28);
+        ctx.lineTo(fx + 3, beakY + 48);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else if (bossState === 'STUNNED') {
+      ctx.fillStyle = '#b45309';
+      ctx.beginPath();
+      ctx.moveTo(-15, beakY);
+      ctx.lineTo(0, beakY + 28);
+      ctx.lineTo(15, beakY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Exposed drooped fangs
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(-10, beakY + 8);
+      ctx.lineTo(-7, beakY + 22);
+      ctx.lineTo(-4, beakY + 8);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(4, beakY + 8);
+      ctx.lineTo(7, beakY + 22);
+      ctx.lineTo(10, beakY + 8);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Menacing predator beak with visible sharp fangs
+      ctx.fillStyle = '#ea580c';
+      ctx.beginPath();
+      ctx.moveTo(-16, beakY);
+      ctx.lineTo(0, beakY + 32);
+      ctx.lineTo(16, beakY);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#9a3412';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Two large wicked curved ivory fangs protruding from upper jaw
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1;
+
+      // Left curved fang
+      ctx.beginPath();
+      ctx.moveTo(-12, beakY + 12);
+      ctx.quadraticCurveTo(-14, beakY + 24, -9, beakY + 35);
+      ctx.quadraticCurveTo(-7, beakY + 22, -6, beakY + 12);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Right curved fang
+      ctx.beginPath();
+      ctx.moveTo(6, beakY + 12);
+      ctx.quadraticCurveTo(7, beakY + 22, 9, beakY + 35);
+      ctx.quadraticCurveTo(14, beakY + 24, 12, beakY + 12);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Interlocking lower fangs
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(-4, beakY + 30);
+      ctx.lineTo(-1, beakY + 22);
+      ctx.lineTo(2, beakY + 30);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Stunned stars
+    if (bossState === 'STUNNED') {
+      for (let st = 0; st < 3; st++) {
+        const starAngle = frameCount * 0.08 + (st * Math.PI * 2) / 3;
+        const sx = Math.cos(starAngle) * (s * 0.38);
+        const sy = headY - 26 + Math.sin(starAngle) * 14;
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('★', sx, sy);
+      }
+    }
+
+    // Bite countdown arc
+    if (bossState === 'BITING') {
+      const remainingProgress = Math.max(0, biteTimer / BOSS_PARRY_WINDOW_MS);
+
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.65, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.65, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * remainingProgress);
+      ctx.stroke();
+
+      ctx.shadowColor = '#ef4444';
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = '#ef4444';
+      ctx.font = `bold 16px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`⚔️ SHOOT TO PARRY! (${(biteTimer / 1000).toFixed(1)}s)`, 0, -s * 0.58);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+    }
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('GOOGLE ANALYTICS', 0, s * 0.58);
+
+    ctx.restore();
+  }
+
+  function renderBossHUD(vw, vh) {
+    const padding = 14;
+    const barH = 50;
+
+    ctx.fillStyle = 'rgba(20, 20, 35, 0.75)';
+    ctx.fillRect(0, 0, vw, barH);
+
+    const borderGrad = ctx.createLinearGradient(0, 0, vw, 0);
+    borderGrad.addColorStop(0, 'rgba(234, 88, 12, 0)');
+    borderGrad.addColorStop(0.3, '#f97316');
+    borderGrad.addColorStop(0.7, '#f97316');
+    borderGrad.addColorStop(1, 'rgba(234, 88, 12, 0)');
+    ctx.fillStyle = borderGrad;
+    ctx.fillRect(0, barH - 2, vw, 2);
+
+    ctx.textBaseline = 'middle';
+    const cy = barH / 2;
+
+    // Left badge
+    ctx.fillStyle = 'rgba(234, 88, 12, 0.2)';
+    roundRect(ctx, padding, cy - 13, 140, 26, 13);
+    ctx.fill();
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 1;
+    roundRect(ctx, padding, cy - 13, 140, 26, 13);
+    ctx.stroke();
+
+    ctx.fillStyle = '#f97316';
+    ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('⚔️ STAGE 2: BOSS', padding + 70, cy);
+
+    // Weapon Pill
+    const wPillX = padding + 152;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    roundRect(ctx, wPillX, cy - 13, 140, 26, 13);
+    ctx.fill();
+
+    ctx.fillStyle = selectedGun ? selectedGun.color : '#ffffff';
+    ctx.font = `bold 11px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(selectedGun ? selectedGun.name : 'PISTOL', wPillX + 70, cy);
+
+    // Center Boss HP Bar
+    const hpBarW = Math.min(vw * 0.42, 440);
+    const hpBarH = 18;
+    const hpBarX = vw / 2 - hpBarW / 2;
+    const hpBarY = cy - hpBarH / 2;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    roundRect(ctx, hpBarX, hpBarY, hpBarW, hpBarH, 9);
+    ctx.fill();
+
+    const hpRatio = Math.max(0, Math.min(1, bossSmoothHP / bossMaxHP));
+    const fillW = Math.max(8, hpBarW * hpRatio);
+    const barColor = hpRatio > 0.5 ? '#10b981' : hpRatio > 0.25 ? '#f59e0b' : '#ef4444';
+    ctx.fillStyle = barColor;
+    roundRect(ctx, hpBarX, hpBarY, fillW, hpBarH, 9);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, hpBarX, hpBarY, hpBarW, hpBarH, 9);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold 11px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`🦅 GOOGLE ANALYTICS: ${Math.max(0, bossHP)} / ${bossMaxHP} HP  |  ⚠️ BITE: ${bossBiteDamage} DMG`, vw / 2, cy);
+
+    // Right: Player HP & Score
+    const pHealthX = vw - padding - 180;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(`❤️ ${playerHealth} / 10`, pHealthX, cy);
+
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.font = `bold 14px 'Segoe UI', system-ui, sans-serif`;
+    ctx.fillText(`🎯 ${score.toLocaleString()}`, pHealthX + 75, cy);
+
+    ctx.fillStyle = COLOR_MUTED;
+    ctx.font = `10px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText('[ESC]', vw - padding, cy);
+  }
+
+  function renderBossCrosshair() {
+    const r = CROSSHAIR_SIZE + 4;
+    const wColor = selectedGun ? selectedGun.color : '#00e5ff';
+
+    ctx.save();
+    ctx.translate(mouseX, mouseY);
+    ctx.rotate(frameCount * 0.02);
+    ctx.strokeStyle = wColor;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 8, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI * 2 * i) / 8;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle) * (r + 5), Math.sin(angle) * (r + 5));
+      ctx.lineTo(Math.cos(angle) * (r + 11), Math.sin(angle) * (r + 11));
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = wColor;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(mouseX - r - 8, mouseY);
+    ctx.lineTo(mouseX - r / 2.5, mouseY);
+    ctx.moveTo(mouseX + r / 2.5, mouseY);
+    ctx.lineTo(mouseX + r + 8, mouseY);
+    ctx.moveTo(mouseX, mouseY - r - 8);
+    ctx.lineTo(mouseX, mouseY - r / 2.5);
+    ctx.moveTo(mouseX, mouseY + r / 2.5);
+    ctx.lineTo(mouseX, mouseY + r + 8);
+    ctx.stroke();
+
+    ctx.fillStyle = wColor;
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (gunCooldownTimer > 0 && selectedGun) {
+      const maxCd = selectedGun.fireRateMs / 16.667;
+      const progress = 1 - Math.max(0, gunCooldownTimer / maxCd);
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3.5;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      ctx.arc(mouseX, mouseY, r + 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = wColor;
+    ctx.font = `bold 9px 'Segoe UI', system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(selectedGun ? selectedGun.shortName : 'PISTOL', mouseX, mouseY + r + 14);
+    ctx.globalAlpha = 1;
   }
 
   function renderBird(bird) {
@@ -2115,12 +3353,154 @@ window.AdSniperGame = (() => {
     ctx.fillStyle = 'rgba(15, 15, 23, 0.92)';
     ctx.fillRect(0, 0, vw, vh);
 
-    // Render celebratory fireworks around results if accuracy > 80%
-    if (isHighAccuracy) {
+    // Render celebratory fireworks around results if accuracy > 80% or boss defeated
+    if (isHighAccuracy || bossDefeated) {
       renderFireworks();
     }
 
     ctx.globalAlpha = gameOverAlpha;
+
+    // If Stage 2 was reached or Boss defeated, show dual-stage breakdown
+    if (currentStage === 2 || bossDefeated) {
+      const cardW = 540;
+      const cardH = 480;
+
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+      ctx.shadowBlur = 30;
+      ctx.shadowOffsetY = 8;
+
+      ctx.fillStyle = COLOR_HUD_BG;
+      roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 16);
+      ctx.fill();
+
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+
+      ctx.strokeStyle = bossDefeated ? '#fbbf24' : '#ef4444';
+      ctx.lineWidth = 2.5;
+      roundRect(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 16);
+      ctx.stroke();
+
+      ctx.fillStyle = bossDefeated ? '#fbbf24' : '#ef4444';
+      ctx.font = `bold 24px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const titleText = bossDefeated ? '🏆 VICTORY: GOOGLE ANALYTICS PURGED! 🏆' : '💀 DEFEAT: TELEMETRY TRIUMPHED';
+      ctx.fillText(titleText, cx, cy - 205);
+
+      ctx.fillStyle = COLOR_TEXT;
+      ctx.font = `bold 20px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillText(`Combined Score: ${score.toLocaleString()} PTS`, cx, cy - 170);
+
+      // Stage 1 Summary Box
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      roundRect(ctx, cx - 240, cy - 145, 480, 80, 10);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, cx - 240, cy - 145, 480, 80, 10);
+      ctx.stroke();
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillText('── STAGE 1: AD TARGET SWARM ──', cx - 225, cy - 128);
+
+      ctx.font = `12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Birds Vaporized:`, cx - 225, cy - 104);
+      ctx.fillStyle = COLOR_TEXT;
+      ctx.fillText(`${stage1BirdsHit || birdsHit} / ${stage1TotalBirds || totalBirds}`, cx - 110, cy - 104);
+
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Accuracy:`, cx - 225, cy - 80);
+      ctx.fillStyle = accuracy >= 80 ? COLOR_GREEN : COLOR_AMBER;
+      ctx.fillText(`${accuracy}%`, cx - 110, cy - 80);
+
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Best Combo:`, cx + 30, cy - 104);
+      ctx.fillStyle = COLOR_AMBER;
+      ctx.fillText(`×${Math.max(1, bestCombo)} 🔥`, cx + 130, cy - 104);
+
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Stage 1 Score:`, cx + 30, cy - 80);
+      ctx.fillStyle = COLOR_GREEN;
+      ctx.fillText(`${stage1Score.toLocaleString()} PTS`, cx + 130, cy - 80);
+
+      // Stage 2 Boss Summary Box
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+      roundRect(ctx, cx - 240, cy - 50, 480, 110, 10);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(234, 88, 12, 0.3)';
+      roundRect(ctx, cx - 240, cy - 50, 480, 110, 10);
+      ctx.stroke();
+
+      ctx.fillStyle = '#f97316';
+      ctx.font = `bold 13px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillText('── STAGE 2: GOOGLE ANALYTICS BOSS ──', cx - 225, cy - 30);
+
+      ctx.font = `12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Boss Status:`, cx - 225, cy - 4);
+      ctx.fillStyle = bossDefeated ? COLOR_GREEN : COLOR_RED;
+      ctx.fillText(bossDefeated ? `SLAIN (0 / ${bossMaxHP} HP)` : `ALIVE (${Math.max(0, bossHP)} / ${bossMaxHP} HP)`, cx - 110, cy - 4);
+
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Weapon Chosen:`, cx - 225, cy + 20);
+      ctx.fillStyle = selectedGun ? selectedGun.color : COLOR_TEXT;
+      ctx.fillText(selectedGun ? selectedGun.name : 'PISTOL', cx - 110, cy + 20);
+
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Parries Executed:`, cx + 30, cy - 4);
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = `bold 12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillText(`${parriesLanded} ⚔️`, cx + 150, cy - 4);
+
+      ctx.font = `12px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.fillText(`Bite Damage Taken:`, cx + 30, cy + 20);
+      ctx.fillStyle = bossDamageTaken === 0 ? COLOR_GREEN : COLOR_RED;
+      ctx.fillText(`${bossDamageTaken} HP`, cx + 150, cy + 20);
+
+      // Quit Game Button
+      const btnW = 180;
+      const btnH = 40;
+      const btnX = cx - btnW / 2;
+      const btnY = cy + 130;
+      quitButtonBounds = { x: btnX, y: btnY, w: btnW, h: btnH };
+
+      const isHover = mouseX >= btnX && mouseX <= btnX + btnW &&
+                      mouseY >= btnY && mouseY <= btnY + btnH;
+
+      if (canvas) {
+        canvas.style.cursor = isHover ? 'pointer' : 'default';
+      }
+
+      const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+      btnGrad.addColorStop(0, isHover ? '#ef4444' : '#dc2626');
+      btnGrad.addColorStop(1, isHover ? '#dc2626' : '#991b1b');
+      ctx.fillStyle = btnGrad;
+      roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+      ctx.fill();
+
+      ctx.strokeStyle = isHover ? '#fca5a5' : '#f87171';
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold 15px 'Segoe UI', system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🚪 Quit Game', cx, btnY + btnH / 2);
+
+      ctx.fillStyle = COLOR_MUTED;
+      ctx.font = `11px 'Segoe UI', system-ui, sans-serif`;
+      ctx.fillText('or press [ESC]', cx, btnY + btnH + 16);
+
+      ctx.globalAlpha = 1;
+      return;
+    }
 
     const cardW = 500;
     const cardH = 430;
@@ -2323,12 +3703,33 @@ window.AdSniperGame = (() => {
       if (combo > 0 && Date.now() - lastHitTime > COMBO_DECAY_MS) {
         combo = 0;
       }
+    } else if (gameState === 'STAGE_CLEAR') {
+      updateParticles(dt);
+      updateClouds(canvas.width, dt);
+      stageClearTimer -= dt;
+      if (stageClearTimer <= 0) {
+        gameState = 'GUN_SELECT';
+      }
+    } else if (gameState === 'GUN_SELECT') {
+      updateParticles(dt);
+      updateClouds(canvas.width, dt);
+    } else if (gameState === 'BOSS_INTRO') {
+      updateParticles(dt);
+      updateClouds(canvas.width, dt);
+      updateBossIntro(dt);
+    } else if (gameState === 'BOSS_FIGHT') {
+      updateBoss(dt);
+      updateParticles(dt);
+      updateClouds(canvas.width, dt);
+      if (gunCooldownTimer > 0) {
+        gunCooldownTimer -= dt;
+      }
     } else if (gameState === 'GAME_OVER') {
       updateParticles(dt);
       updateClouds(canvas.width, dt);
       const totalShots = birdsHit + shotsMissed;
       const accuracy = totalShots > 0 ? Math.round((birdsHit / totalShots) * 100) : (totalBirds > 0 ? 0 : 100);
-      if (accuracy > 80) {
+      if (accuracy > 80 || bossDefeated) {
         const vw = canvas ? canvas.width : window.innerWidth;
         const vh = canvas ? canvas.height : window.innerHeight;
         updateFireworks(vw, vh, vw / 2, vh / 2, dt);
@@ -2357,6 +3758,242 @@ window.AdSniperGame = (() => {
       if (clickX >= b.x && clickX <= b.x + b.w &&
           clickY >= b.y && clickY <= b.y + b.h) {
         endGame();
+      }
+      return;
+    }
+
+    if (gameState === 'STAGE_CLEAR') {
+      gameState = 'GUN_SELECT';
+      return;
+    }
+
+    if (gameState === 'GUN_SELECT') {
+      const clickX = e.clientX;
+      const clickY = e.clientY;
+      for (const b of gunCardsBounds) {
+        if (clickX >= b.x && clickX <= b.x + b.w &&
+            clickY >= b.y && clickY <= b.y + b.h) {
+          if (b.unlocked) {
+            selectedGun = b.gun;
+            initBossFight();
+            gameState = 'BOSS_INTRO';
+            particles.push({
+              x: canvas.width / 2,
+              y: canvas.height / 2,
+              vx: 0,
+              vy: -1.5,
+              life: 60,
+              maxLife: 60,
+              isText: true,
+              text: `⚔️ EQUIPPED: ${b.gun.name.toUpperCase()}`,
+              color: b.gun.color,
+              size: 0,
+            });
+            break;
+          } else {
+            triggerScreenShake(3);
+            particles.push({
+              x: clickX,
+              y: clickY - 20,
+              vx: 0,
+              vy: -1.2,
+              life: 45,
+              maxLife: 45,
+              isText: true,
+              text: `🔒 Need ${b.gun.requiredScore} PTS (You have ${score})`,
+              color: COLOR_RED,
+              size: 0,
+            });
+          }
+        }
+      }
+      return;
+    }
+
+    if (gameState === 'BOSS_INTRO') {
+      gameState = 'BOSS_FIGHT';
+      bossState = 'PATROL';
+      biteCooldown = 180;
+      return;
+    }
+
+    if (gameState === 'BOSS_FIGHT') {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (gunCooldownTimer > 0) {
+        return;
+      }
+
+      const clickX = e.clientX;
+      const clickY = e.clientY;
+
+      gunCooldownTimer = selectedGun.fireRateMs / 16.667;
+      shotsFired++;
+      muzzleFlashTimer = 5;
+
+      if (selectedGun.id === 'railgun') {
+        const vw = canvas ? canvas.width : window.innerWidth;
+        const vh = canvas ? canvas.height : window.innerHeight;
+        railgunBeam = {
+          startX: vw * 0.85,
+          startY: vh,
+          endX: clickX,
+          endY: clickY,
+          timer: 12,
+        };
+        triggerScreenShake(10);
+      } else if (selectedGun.id === 'sniper') {
+        const vw = canvas ? canvas.width : window.innerWidth;
+        const vh = canvas ? canvas.height : window.innerHeight;
+        sniperTracer = {
+          startX: vw * 0.5,
+          startY: vh,
+          endX: clickX,
+          endY: clickY,
+          timer: 10,
+        };
+        triggerScreenShake(12);
+        for (let i = 0; i < 8; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          particles.push({
+            x: clickX,
+            y: clickY,
+            vx: Math.cos(angle) * (3 + Math.random() * 4),
+            vy: Math.sin(angle) * (3 + Math.random() * 4),
+            life: 20,
+            maxLife: 20,
+            color: '#34d399',
+            size: 2.5 + Math.random() * 2,
+            isText: false,
+          });
+        }
+      } else if (selectedGun.id === 'shotgun') {
+        triggerScreenShake(6);
+        for (let i = -1; i <= 1; i++) {
+          const spreadAngle = i * 0.12;
+          for (let p = 0; p < 3; p++) {
+            particles.push({
+              x: clickX + (Math.random() - 0.5) * 30,
+              y: clickY + (Math.random() - 0.5) * 30,
+              vx: Math.cos(spreadAngle) * (2 + Math.random() * 4),
+              vy: Math.sin(spreadAngle) * (2 + Math.random() * 4),
+              life: 25,
+              maxLife: 25,
+              color: '#ff6d00',
+              size: 3 + Math.random() * 2,
+              isText: false,
+            });
+          }
+        }
+      } else {
+        triggerScreenShake(3);
+      }
+
+      // Hit test against boss
+      let currentBossSize = bossSize;
+      if (bossState === 'BITING') {
+        const lungeProg = 1 - Math.max(0, biteTimer / BOSS_PARRY_WINDOW_MS);
+        currentBossSize *= (1.0 + Math.sin(lungeProg * Math.PI) * 0.45);
+      }
+      const dist = Math.hypot(clickX - bossX, clickY - bossY);
+      const hitRadius = currentBossSize * (bossState === 'BITING' ? 0.85 : 0.65);
+
+      // Headshot detection (head center is at bossX, bossY - currentBossSize * 0.32, radius ~ currentBossSize * 0.24)
+      const headDist = Math.hypot(clickX - bossX, clickY - (bossY - currentBossSize * 0.32));
+      const isHeadshot = headDist <= currentBossSize * 0.24;
+
+      if (dist <= hitRadius && bossState !== 'DYING') {
+        // Calculate base weapon damage (Sniper deals 10 base, double = 20 on headshot)
+        let baseDmg = selectedGun.damage;
+        if (selectedGun.id === 'sniper' && isHeadshot) {
+          baseDmg = selectedGun.headshotDamage || (selectedGun.damage * 2);
+        }
+
+        if (bossState === 'BITING') {
+          // ── PARRY! ──
+          bossState = 'STUNNED';
+          stunTimer = 90; // 1.5s stun
+          const dmg = baseDmg * 2;
+          bossHP = Math.max(0, bossHP - dmg);
+          parriesLanded++;
+          score += 350 + (isHeadshot ? 250 : 0);
+
+          bossX = bossLungeStartX;
+          bossY = bossLungeStartY;
+
+          triggerScreenShake(isHeadshot ? 18 : 14);
+          spawnParrySparks(clickX, clickY);
+
+          particles.push({
+            x: bossX,
+            y: bossY - 60,
+            vx: 0,
+            vy: -1.5,
+            life: 80,
+            maxLife: 80,
+            isText: true,
+            text: (selectedGun.id === 'sniper' && isHeadshot)
+              ? `⚔️🎯 PARRY HEADSHOT! 2× DMG (-${dmg} HP)`
+              : `⚔️ PARRY! 2× DMG (-${dmg} HP)`,
+            color: '#fbbf24',
+            size: 0,
+          });
+        } else {
+          // Standard hit
+          const dmg = baseDmg;
+          bossHP = Math.max(0, bossHP - dmg);
+          score += 50 * dmg + (isHeadshot ? 150 : 0);
+          spawnBossHitParticles(clickX, clickY, (selectedGun.id === 'sniper' && isHeadshot) ? '#34d399' : selectedGun.color);
+
+          particles.push({
+            x: clickX,
+            y: clickY - 30,
+            vx: 0,
+            vy: -1.2,
+            life: 45,
+            maxLife: 45,
+            isText: true,
+            text: (selectedGun.id === 'sniper' && isHeadshot)
+              ? `🎯 CRITICAL HEADSHOT! (-${dmg} HP)`
+              : `-${dmg} HP`,
+            color: (selectedGun.id === 'sniper' && isHeadshot) ? '#34d399' : '#f87171',
+            size: 0,
+          });
+        }
+
+        if (bossHP <= 0) {
+          bossState = 'DYING';
+          bossDeathTimer = 100;
+          triggerScreenShake(16);
+          particles.push({
+            x: canvas.width / 2,
+            y: canvas.height * 0.35,
+            vx: 0,
+            vy: -1.0,
+            life: 90,
+            maxLife: 90,
+            isText: true,
+            text: '💥 GOOGLE ANALYTICS DESTROYED! 💥',
+            color: '#fbbf24',
+            size: 0,
+          });
+        }
+      } else {
+        shotsMissed++;
+        for (let i = 0; i < 4; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          particles.push({
+            x: clickX,
+            y: clickY,
+            vx: Math.cos(angle) * 2,
+            vy: Math.sin(angle) * 2,
+            life: 15,
+            maxLife: 15,
+            color: 'rgba(239,68,68,0.6)',
+            size: 2,
+          });
+        }
       }
       return;
     }
@@ -2588,6 +4225,25 @@ window.AdSniperGame = (() => {
       ];
     }
 
+    // Save total ad count for Stage 2 Boss HP (HP = 50 Base + 2 * total ads on page)
+    totalAdsFound = adData.length;
+    bossMaxHP = 50 + (totalAdsFound * 2);
+    bossHP = bossMaxHP;
+    bossSmoothHP = bossMaxHP;
+    bossBiteDamage = 1;
+    currentStage = 1;
+    stage1Score = 0;
+    stage1BirdsHit = 0;
+    stage1TotalBirds = 0;
+    stageClearTimer = 0;
+    selectedGun = STAGE2_GUNS[0];
+    bossDefeated = false;
+    parriesLanded = 0;
+    bossDamageTaken = 0;
+    gunCooldownTimer = 0;
+    railgunBeam = null;
+    playerHealth = 10;
+
     // Create birds
     loadingProgress = 0.95;
     loadingMessage = `Found ${adData.length} target${adData.length > 1 ? 's' : ''} — preparing...`;
@@ -2678,6 +4334,9 @@ window.AdSniperGame = (() => {
     fireworks = [];
     loadingPurgedAds = [];
     quitButtonBounds = { x: 0, y: 0, w: 0, h: 0 };
+    gunCardsBounds = [];
+    railgunBeam = null;
+    currentStage = 1;
 
     // If this game was launched in a dedicated new tab, close this tab on quit
     try {

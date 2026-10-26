@@ -15,7 +15,7 @@ AdSniper is a privacy-first Chrome extension built to give users surgical contro
 | 📋 **Lists** | Side-by-side persistent Scratchpad notepad and Todo List task manager, writable by both the user and the AI assistant |
 | 🍪 **Cookie Editor** | View, edit, lock (prevent page from changing), and delete cookies for the current tab |
 | 🤖 **Gemini Nano AI (AdBlocker)** | On-device Built-in AI (Chrome Prompt API) running 100% locally; natural language ad control, forensic tracker audits, overlay & Distraction free Reading removal, and autonomous MCP tools |
-| 🔫 **Sniping Mode** | Interactive Canvas game that temporarily pauses blocking, scans page ads, and converts them into flying bird targets |
+| 🔫 **Sniping Mode** | Interactive Canvas game: Stage 1 converts page ads into flying birds; Stage 2 unlocks an Armory selection (Pistol/Shotgun/Railgun/Sniper) leading to a Boss fight against the evil, fanged Google Analytics boss (HP = 50 + ads × 2, +50% boosted speed) with a 1-second bite & parry mechanic, +100% damage scaling per landed bite, and headshot multipliers |
 
 It uses **Manifest V3** exclusively. Network blocking is performed natively by Chrome's `declarativeNetRequest` (DNR) engine, not `webRequest` blocking. The DOM is manipulated via an isolated content script. The AI runs directly in the browser's GPU/VRAM via Chrome's Built-in AI, executing lightweight Model Context Protocol (MCP) actions through two dedicated sessions.
 
@@ -249,7 +249,7 @@ adsniper/
 | `handleCleanPage()` | Sends CLEAN_PAGE to content script |
 | `handleElementPicker()` | Sends START_ELEMENT_PICKER, closes popup |
 | `initIframeBlockerToggle()` | Reads/writes `iframeBlockerEnabled`, messages content script |
-| `handleSnipingGame()` | Saves state, disables blocking, reloads tab or opens new tab, sets `snipingGamePending` |
+| `handleSnipingGame()` | Saves state, disables blocking, reloads tab or opens new tab, sets `snipingGamePending`, and auto-closes popup |
 | `refreshCookies()` | Calls `chrome.cookies.getAll`, renders with lock/delete |
 | `isCookieAccessibleUrl(url)` | Guards against chrome:// / PDF pages |
 | `toggleCookieLock(cookie)` | Writes/removes from `lockedCookies` in storage |
@@ -615,6 +615,60 @@ const response = await session.prompt("Summarize ad blocking in 5 words.");
 console.log("Model Response:", response);
 session.destroy(); // Always free memory
 ```
+
+---
+
+### 5.11 Sniping Game Engine & Stage 2 Boss Battle Architecture
+
+AdSniper features a 2-stage gamified ad elimination experience loaded into the active tab via `content/sniper-game.js`:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        SNIPING GAME STATE MACHINE                      │
+│                                                                        │
+│   LOADING (Ad Scanning + DOM Overlay Purging)                          │
+│      │                                                                 │
+│      ▼                                                                 │
+│   PLAYING: Stage 1 (Zigzag Target Birds from Detected Ads)             │
+│      │                                                                 │
+│      ▼ (All birds eliminated)                                          │
+│   STAGE_CLEAR (Victory Splash + Points Accrual)                        │
+│      │                                                                 │
+│      ▼                                                                 │
+│   GUN_SELECT (Armory: Pistol, Shotgun, Railgun, Heavy Sniper)          │
+│      │                                                                 │
+│      ▼ (Weapon chosen)                                                 │
+│   BOSS_INTRO (Cinematic approach of evil fanged Google Analytics Boss) │
+│      │                                                                 │
+│      ▼                                                                 │
+│   BOSS_FIGHT: Stage 2 (Bite Attack, 1.0s Parry Window, +50% Speed)     │
+│      │                                                                 │
+│      ▼ (Boss Defeated or Player HP = 0)                                │
+│   GAME_OVER (Dual-Stage Results Matrix: Birds, Accuracy, Weapon,      │
+│              Parries Landed, Damage Taken, Combined Final Score)       │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Stage 2 Specifications:
+1. **Google Analytics Boss**:
+   - **Name**: "Google Analytics"
+   - **Health Scaling**: Boss HP starts from 50 Base HP plus 2× the total ads on the page (`bossMaxHP = 50 + (totalAdsFound * 2)`).
+   - **Evil Visuals & Fangs**: Demonic raptor with prominent curved ivory fangs on the upper beak, interlocking lower fangs, 6 razor serrated blood fangs exposed during bite attacks, a spiked aggressive crest, and a glowing crimson demonic eye with vertical yellow slitted pupil.
+   - **+50% Flight Speed**: Base flight speed boosted by 50% (`bossVx = 4.8 px/frame` in Patrol mode, `7.2+ px/frame` in Enraged mode) with scaled flap and sine-wave oscillation frequencies.
+2. **Armory & Point-Gated Weapon Selection**:
+   - 🔫 **Tactical Pistol** (0+ PTS): 1 DMG, 300ms rapid fire rate, cyan reticle.
+   - 🔥 **Flame Shotgun** (150+ PTS): 3 DMG, 900ms cycle rate, 3-pellet incendiary spread cone, orange reticle.
+   - ⚡ **Hyper Railgun** (300+ PTS): 5 DMG, 1500ms cycle rate, piercing screen-length beam, magenta reticle.
+   - 🎯 **Heavy Sniper** (450+ PTS): 10 DMG base, 1800ms cycle rate, green supersonic tracer, green reticle. **Critical Headshots deal double damage** (20 DMG base, 40 DMG on parry!).
+3. **Bite Attack, Scaling Damage & 1-Second Parry Mechanic**:
+   - The boss periodically lunges toward the player with gaping fanged jaws in a fast 1.0-second bite attack (`biteTimer = 1000`).
+   - **Parry**: If the player shoots the boss during this 1.0-second window, the bite is neutralized, the boss is stunned for 1.5 seconds, and takes **2× critical weapon damage** (`baseDmg * 2`).
+   - **+100% Damage Ramp Per Hit**: Starts at 1 HP bite damage. Every time an unparried bite lands on the player, the boss's bite damage doubles (+100%: 1 HP → 2 HP → 4 HP → 8 HP → 16 HP).
+   - **Sniper Headshot Geometry**: Head radius centered at `(bossX, bossY - bossSize * 0.32)`. Accurate headshot hits trigger double damage and `🎯 CRITICAL HEADSHOT!` or `⚔️🎯 PARRY HEADSHOT!` floating combat text.
+4. **Boss Phases**:
+   - **Patrol** (HP > 25%): Smooth sine-wave horizontal patrol with periodic bite attacks every 3.5–5.5s.
+   - **Enraged** (HP ≤ 25%): Red glowing aura, erratic high-speed flight, shorter bite intervals (2.0–3.0s).
+   - **Stunned**: Recoils in place for 1.5s with rotating dizzy stars and disabled attacks.
 
 ---
 

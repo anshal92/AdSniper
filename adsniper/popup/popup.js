@@ -1617,7 +1617,8 @@ async function handleSnipingGame() {
       await chrome.tabs.reload(activeTabId);
     }
 
-    // Popup will close naturally when tab reloads/navigates
+    // Auto-close the extension popup window so the user directly sees the game canvas
+    window.close();
   } catch (err) {
     console.error('[AdSniper] Sniping game launch failed:', err);
     btn.disabled = false;
