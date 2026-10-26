@@ -4,6 +4,71 @@ All notable changes to the AdSniper extension are documented here. Newest entrie
 
 ---
 
+## [2026-10-27] — Stage 2 Tweaks: Boss Speed Increased +50% & Parry Time Decreased to 1s
+
+### Updated & Tuned
+- **Boss Flight Speed Boosted by +50% (`content/sniper-game.js`, `Architecture.md`)**:
+  - Increased base horizontal flight velocity `bossVx` by 50% from `3.2` to `4.8 px/frame`.
+  - Scaled Enraged mode horizontal velocity up to `7.2+ px/frame`.
+  - Harmonized vertical sine oscillation frequency and wing flap animation rate to match the accelerated speed.
+- **Parry Window Decreased to 1.0 Second (`content/sniper-game.js`, `Architecture.md`)**:
+  - Decreased bite attack & parry response window from 2.0s (2000ms) down to 1.0s (`BOSS_PARRY_WINDOW_MS = 1000`).
+  - Tuned the bite lunge interpolation arc, dynamic scale growth, and circular HUD countdown meter to 1.0s.
+  - Updated floating notification and intro instructions to reflect the faster reflex requirement: `⚠️ BITE INCOMING — SHOOT TO PARRY! (1.0s)`.
+- **Project Documentation Overhaul (`README.md`)**:
+  - Updated the project index, overview, Section 4 ("Gamified Sniping Mode (2-Stage Swarm & Boss Encounter)"), and "How to Play Sniping Mode" to document the complete two-stage architecture, 4-tier Armory (featuring Heavy Sniper & headshot mechanics), evil Google Analytics boss fight, +50% speed boost, and 1.0-second parry dynamics.
+- **Auto-Close Extension Popup on Sniping Mode Launch (`popup/popup.js`, `Architecture.md`)**:
+  - Added an explicit `window.close()` call to `handleSnipingGame()` in `popup/popup.js` after tab navigation/reload is initiated, immediately dismissing the extension popup UI so the user transitions seamlessly to the game canvas without manual clicks.
+
+---
+
+## [2026-10-27] — Stage 2 Boss Tweaks: Google Analytics Evil Fangs, Damage Scaling & Heavy Sniper Weapon
+
+### Added & Updated
+- **Evil Fangs & Visual Overhaul for Boss (`content/sniper-game.js`, `Architecture.md`)**:
+  - Renamed boss encounter to **'Google Analytics'** across all HUD elements, intro banners, defeat/victory screens, and results cards.
+  - Implemented evil fanged boss aesthetics: curved ivory fangs protruding from upper beak, sharp interlocking lower teeth, and 6 serrated crimson blood fangs exposed during bite lunges.
+  - Added demonic crimson glowing optic eye with vertical yellow slitted pupil and spiky aggressive head crest.
+- **+100% Boss Damage Ramp on Every Landed Hit (`content/sniper-game.js`)**:
+  - Boss bite damage now scales aggressively: starts at 1 HP, and doubles (+100%) on every unparried bite that lands on the player (1 HP → 2 HP → 4 HP → 8 HP → 16 HP).
+  - Added real-time threat HUD telemetry indicator: `⚠️ BITE: ${bossBiteDamage} DMG` alongside boss health bar and floating combat notification indicating next bite DMG.
+- **Boss Health Formula Updated (`content/sniper-game.js`)**:
+  - Boss health now starts with a base of 50 HP plus 2× the number of Stage 1 ads: `bossMaxHP = 50 + (totalAdsFound * 2)`.
+  - Intro screen and HUD reflect this transparently (`Health Source: 50 Base HP + (N Ads × 2)`).
+- **New 'Heavy Sniper' Armory Weapon (`content/sniper-game.js`)**:
+  - Added **🎯 Heavy Sniper** to the Stage 2 weapon selection menu as the premier tier option (450+ PTS).
+  - Weapon statistics: 10 base damage, 1800ms fire interval, emerald supersonic tracer beam (`#34d399`), custom green reticle, and heavy recoil screen shake.
+  - **Headshot Multiplier (Double Damage)**: Integrated headshot detection targeting boss head geometry (`headY = bossY - bossSize * 0.32`, radius = `bossSize * 0.24`).
+  - Dealing a headshot with the Sniper delivers **20 DMG** (or **40 DMG** on a parry!), spawning floating combat text `🎯 CRITICAL HEADSHOT! (-20 HP)` or `⚔️🎯 PARRY HEADSHOT! (-40 HP)`.
+
+---
+
+## [2026-10-27] — Stage 2: Google Analytics Garuda Boss Fight & Armory Selection
+
+### Added
+- **Sniping Mode Stage 2 Boss Encounter (`content/sniper-game.js`)**:
+  - Implemented full game state machine expansion: `LOADING → PLAYING (Stage 1) → STAGE_CLEAR → GUN_SELECT → BOSS_INTRO → BOSS_FIGHT (Stage 2) → GAME_OVER`.
+  - Added **Google Analytics Garuda Boss**:
+    - Boss HP dynamically scales to the total number of detected ads on the page (`bossMaxHP = Math.max(5, totalAdsFound)`).
+    - Custom Canvas procedural rendering featuring Google Analytics telemetry themes: obsidian raptor chassis, glowing telemetry 3-bar histogram tail feathers and breastplate emblem, optical target eye, and articulated wings.
+    - Multi-phase boss AI with smooth sine-wave `PATROL` mode and high-speed aggressive `ENRAGED` mode (triggered when HP ≤ 25%).
+- **Interactive Armory & Score-Gated Weapon Selection (`content/sniper-game.js`)**:
+  - Added weapon selection screen between Stage 1 and Stage 2 with 3 glassmorphism cards:
+    - 🔫 **Tactical Pistol** (0+ PTS): 1 DMG, 300ms rapid fire rate, cyan crosshair reticle.
+    - 🔥 **Flame Shotgun** (150+ PTS): 3 DMG, 900ms cycle rate, 3-pellet incendiary spread cone, orange reticle.
+    - ⚡ **Hyper Railgun** (300+ PTS): 5 DMG, 1500ms cycle rate, piercing screen-length magenta energy beam, heavy screen shake.
+  - Interactive hover effects and lock overlays with required point differentials for locked weapons.
+- **2-Second Bite Attack & Parry Combat Mechanic (`content/sniper-game.js`)**:
+  - Boss telegraphs and executes a 2.0-second lunge bite attack (`biteTimer = 2000`) with gaping plasma fangs and a circular countdown HUD timer.
+  - **Parry**: Shooting the boss during the 2.0s bite window cancels the bite, triggers a screen-wide parry announcement with golden sparks, stuns the boss for 1.5 seconds, and deals **2× critical weapon damage**.
+  - **Damage**: If unparried, the bite connects, dealing 1 HP damage to the player with a red damage vignette and screen shake.
+- **Dual-Stage Results Summary Card (`content/sniper-game.js`)**:
+  - Upgraded Game Over screen to display comprehensive dual-stage statistics: Stage 1 performance (targets hit, accuracy, combo, stage score) and Stage 2 boss results (boss defeated status, weapon chosen, parries executed, bite damage taken, combined final score).
+- **Architecture & Knowledge Base Documentation (`Architecture.md`)**:
+  - Added Section 5.11 detailing the complete Stage 2 state machine, weapon parameters, boss HP scaling, and combat mechanics.
+
+---
+
 ## [2026-10-25] — Element Picker Delete Fix, Popup Resize Controls, Lists Tab Reorder & Save Domain Blocklist
 
 ### Fixed

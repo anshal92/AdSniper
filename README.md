@@ -2,7 +2,7 @@
 
 > **Surgical Ad Blocking, Cookie Control, On-Device AI Personal Assistant (Gemini Nano), Scratchpad & Todo Lists, and Gamified Ad Sniping for Chrome (Manifest V3)**
 
-AdSniper is a powerful, privacy-first Chromium extension designed to give you surgical control over network traffic, intrusive popups, and cookies—featuring an **on-device Gemini Nano Personal Assistant** powered by Chrome's Built-in AI, an integrated **Scratchpad & Todo List** system, and a first-of-its-kind **Gamified Sniping Mode** that transforms irritating page ads into flying targets you can shoot down!
+AdSniper is a powerful, privacy-first Chromium extension designed to give you surgical control over network traffic, intrusive popups, and cookies—featuring an **on-device Gemini Nano Personal Assistant** powered by Chrome's Built-in AI, an integrated **Scratchpad & Todo List** system, and a first-of-its-kind **Gamified Sniping Mode** that transforms irritating page ads into flying targets, features an Armory weapon select, and culminates in a high-stakes Stage 2 Boss Battle against Google Analytics!
 
 Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency declarative rule engines (`declarativeNetRequest`), heuristic DOM sanitization, isolated Canvas overlays, and local LLM execution across four dedicated tabs—without dragging down browser performance or sending your data to external servers.
 
@@ -14,7 +14,7 @@ Built strictly on **Chrome Manifest V3**, AdSniper utilizes high-efficiency decl
   - [🤖 1. On-Device Gemini Nano AI — Dual-Engine Architecture](#-1-on-device-gemini-nano-ai--dual-engine-architecture)
   - [🛡️ 2. Surgical Ad & Tracker Blocker](#️-2-surgical-ad--tracker-blocker)
   - [🎯 3. Element Picker & iFrame Purger](#-3-element-picker--iframe-purger)
-  - [🔫 4. Gamified Sniping Mode (Turn Ads into Targets!)](#-4-gamified-sniping-mode-turn-ads-into-targets)
+  - [🔫 4. Gamified Sniping Mode (2-Stage Swarm & Boss Encounter)](#-4-gamified-sniping-mode-2-stage-swarm--boss-encounter)
   - [📋 5. Scratchpad & Todo Lists](#-5-scratchpad--todo-lists)
   - [🚫 6. Intrusive Pop-up & Anti-Adblock Interceptor](#-6-intrusive-pop-up--anti-adblock-interceptor)
   - [🍪 7. Advanced Cookie Manager & Lock System](#-7-advanced-cookie-manager--lock-system)
@@ -83,17 +83,31 @@ AdSniper runs **two independent AI engines** on-device, each with its own dedica
 - **Smart Container Detection**: `findTargetContainer()` walks up from leaf elements to the best enclosing ad container, ensuring entire ad units are removed cleanly.
 - **Automated iFrame Eradicator**: Scans the DOM using multi-point heuristics (known ad sizes, suspicious source URLs, sandbox attributes) and completely removes sneaky ad iframes from the page.
 
-### 🔫 4. Gamified Sniping Mode (Turn Ads into Targets!)
-- **Ad Hunting**: Click **🔫 Sniping OFF** in the header to turn off ad-blocking on the current page, reload (or open in a new tab), scan all incoming ad elements, and turn them into flying bird targets!
-- **Dynamic Physics & Sizing**:
+### 🔫 4. Gamified Sniping Mode (2-Stage Swarm & Boss Encounter)
+- **Two-Stage Battle Architecture**:
+  - **Stage 1 (Ad Swarm)**: Scans all incoming ad elements on the page and transforms them into flying bird targets fluttering across your screen.
+  - **Armory Weapon Selection**: Spend points earned in Stage 1 to unlock advanced weaponry for the final battle.
+  - **Stage 2 (Boss Fight)**: Face off against the high-level telemetry boss—**Google Analytics**!
+- **Stage 1: Dynamic Target Physics & Marksman Scoring**:
   - **Inverse Sizing**: Small banner ads become large, easy targets; gigantic screen-covering ads become nimble, miniature birds.
-  - **Flutter Trajectories**: Birds flap their wings and fly across your screen with dual-frequency sinusoidal wave paths (`y = A₁·sin(ω₁·t) + A₂·sin(ω₂·t)`), changing headings dynamically.
-- **Marksman Scoring & Piercing Multikills**:
-  - Consecutive hits build a combo multiplier up to **×5**.
-  - Piercing crosshair allows **Double Kills**, **Triple Kills**, and **Multikills (4+)** when flying targets align.
-  - Real-time HUD displays score, combo, birds hit, and missed shots.
-  - **Celebration Fireworks**: Scoring an accuracy of **> 80%** triggers a celebratory fireworks display around the results screen!
-  - **Interactive Results Screen**: Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
+  - **Sinusoidal Flight Trajectories**: Targets flap wings and navigate dual-frequency sinusoidal wave paths (`y = A₁·sin(ω₁·t) + A₂·sin(ω₂·t)`), periodically changing headings.
+  - **Combo Multipliers & Multikills**: Consecutive hits build a combo multiplier up to **×5**. Piercing crosshairs reward **Double Kills**, **Triple Kills**, and **Multikills (4+)** on aligned targets.
+- **Stage 2: The Armory (Score-Gated Weapon Selection)**:
+  - 🔫 **Tactical Pistol** (0+ PTS): 1 DMG, 300ms rapid fire rate, cyan crosshair. Agile, high-accuracy single-shot weapon.
+  - 🔥 **Flame Shotgun** (150+ PTS): 3 DMG, 900ms cycle rate, orange crosshair. Fires a 3-pellet incendiary spread cone for heavy close-range impact.
+  - ⚡ **Hyper Railgun** (300+ PTS): 5 DMG, 1500ms cycle rate, magenta crosshair. Piercing screen-length high-energy beam with screen shake.
+  - 🎯 **Heavy Sniper** (450+ PTS): 10 DMG base, 1800ms cycle rate, green crosshair and supersonic emerald tracer line. Features **Critical Headshots** that deal double damage (**20 DMG** standard, **40 DMG** on parry!).
+- **Stage 2: Boss Battle — Google Analytics**:
+  - **Dynamic Health Scaling**: Boss HP scales directly with the ad density of the page: `50 Base HP + (Ads Found × 2)`.
+  - **Evil, Fanged Raptor Aesthetics**: Spiky aggressive crest, demonic glowing red eye with vertical yellow slitted pupil, prominent curved ivory fangs on the beak, and 6 razor-serrated blood fangs exposed during lunges.
+  - **Agile Flight Speed (+50% Boost)**: Flies at an accelerated 4.8 px/frame in Patrol mode, ramping to 7.2+ px/frame with erratic evasions in Enraged mode (`HP ≤ 25%`).
+  - **1.0-Second Bite Attack & Parry**:
+    - The boss telegraphs and lunges toward the player in a fast 1-second bite window (`biteTimer = 1000`) with a circular HUD countdown gauge.
+    - **Parry**: Shooting the boss during the 1.0s window stuns the boss for 1.5 seconds and inflicts **2× weapon damage** (or **4×** with a Sniper Headshot = 40 DMG!).
+    - **Scaling Threat (+100% Damage Per Hit)**: Unparried bites hit the player and double the boss's bite damage on each strike (`1 HP → 2 HP → 4 HP → 8 HP → 16 HP`), tracked live via `⚠️ BITE: N DMG` HUD telemetry.
+- **Dual-Stage Results Summary Card**:
+  - Comprehensive matrix displaying Stage 1 swarm metrics (targets hit, accuracy %, best combo, stage score), equipped weapon, boss status (slain/alive), parries executed, bite damage absorbed, and combined score with celebratory fireworks for victories.
+  - Dedicated **🚪 Quit Game** button and `[ESC]` key handler to cleanly restore your ad-blocking settings.
 
 ### 📋 5. Scratchpad & Todo Lists
 - **Dedicated "📋 Lists" Tab**: A panel with a persistent **Todo List** at the top for task visibility and a **Scratchpad** notepad at the bottom.
@@ -186,12 +200,20 @@ Once it finishes, open the AdSniper popup, click **✨ Enable AI**, and your on-
 3. In the header bar, click **🔫 Sniping OFF** (optionally check the **New Tab** box to preserve your current tab).
 4. The page will reload in gaming mode:
    - Ad blocking is temporarily lifted.
-   - An overlay scans the page for ad elements and builds your targets.
+   - An overlay scans the page for ad elements and builds your flying targets.
    - Crosshair controls will appear on screen.
-5. **Controls**:
+5. **Stage 1 (Ad Swarm)**:
    - **Aim**: Move your mouse.
-   - **Fire**: Left-click to shoot targets. Align multiple targets for **Double** and **Triple Kills**!
-   - **Exit**: Click **🚪 Quit Game** on the results card or press **`[ESC]`** at any time.
+   - **Fire**: Left-click to shoot targets. Align multiple targets for **Double** and **Triple Kills** to maximize your score!
+6. **The Armory (Weapon Select)**:
+   - Clear all targets to open the Armory.
+   - Select your weapon based on the points you accumulated: **Tactical Pistol** (free), **Flame Shotgun** (150 PTS), **Hyper Railgun** (300 PTS), or **Heavy Sniper** (450 PTS).
+7. **Stage 2 (Boss Encounter — Google Analytics)**:
+   - Engage the fanged Google Analytics boss.
+   - **Execute 1.0s Parries**: When the boss lunges with red jaws (`⚔️ SHOOT TO PARRY!`), shoot it within 1.0 second to parry, stun it, and deal double critical damage!
+   - **Sniper Headshots**: Aim for the head radius with the Heavy Sniper to land double damage (**20 DMG** normal, **40 DMG** on parry).
+   - **Avoid Landed Bites**: Each unparried bite deals damage and doubles the boss's future attack damage by +100%!
+8. **Exit**: Click **🚪 Quit Game** on the results card or press **`[ESC]`** at any time.
 
 ---
 
