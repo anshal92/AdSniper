@@ -46,6 +46,3 @@ jobs:
           head: ""
           extra_args: ""
         # optional: version, image
-
-      - name: 'Jscrambler'
-        uses: jscrambler/code-integrity-actions@8.10.8
